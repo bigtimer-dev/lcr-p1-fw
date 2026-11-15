@@ -101,8 +101,8 @@ lcrp1 flash build/lcrp1-fw.bin   # from github.com/bigtimer-dev/lcr-p1-linux, me
 
 The emulator test runs the image on a model of the board (probe network, relay, comparator + timer capture,
 ADC, flash controller, LCD, UART) and checks start-up, keys, power-off, the LCD init (byte-identical to
-stock), measurements of resistors, capacitors with ESR, diodes and transistors, the self-adjustment and
-the flash store, and that the HV boost pin is never set.
+stock), measurements of resistors, capacitors with ESR, diodes, transistors and inductors, IR remote
+frames, the Zener mode (HV boost only on there), the self-adjustment and the flash store.
 
 ## ComponentTester code
 
