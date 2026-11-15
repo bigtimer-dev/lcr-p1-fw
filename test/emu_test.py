@@ -393,13 +393,13 @@ check('beep: buzzer channel enabled then disabled again', bd.reg.get(0x40013420)
 
 # --- serial probe diagnostic with 1k on 1-2: probe 1 via Rl -> divider 1k / (680 + 1k)
 bd.dut = {(0, 1): 1000}
-uart_text(); bd.uart_rx += b'D'; run_ms(400)
+uart_text(); bd.uart_rx += b'#D\n'; run_ms(400)
 s = uart_text()
 d = [l for l in s.splitlines() if l.startswith('#D P1 Rl')]
 v = int(d[0].split()[3]) if d else -1
 check('diag: P1 via Rl with 1k to P2 (low) reads ~59 % of full scale', 0.55 < v / 4096 < 0.63
       and '#D end' in s, d)
-uart_text(); bd.uart_rx += b'X'; run_ms(300)
+uart_text(); bd.uart_rx += b'#X\n'; run_ms(300)
 s = uart_text()
 check('drive experiment runs and restores', '#X end' in s and bd.pin('B', 3) == 0, s[-200:])
 check('diag: probes shorted again afterwards', bd.pin('B', 3) == 0)
@@ -442,8 +442,15 @@ bd.adc[8] = 1700
 run_ms(1100)
 uart_text()
 
+# --- stray bytes (e.g. firmware data sent to a running meter) do not trigger commands
+uart_text(); bd.uart_rx += b'T?DX\x00\xffT\n'; run_ms(300)
+s = uart_text()
+check('stray bytes without "#" are ignored', '#R' not in s and '#?' not in s and '#D' not in s, s[-120:])
+uart_text(); bd.uart_rx += b'#S15\n'; run_ms(50)
+check('#S sets the ADC sample time', '#S 15' in uart_text() and (bd.reg.get(0x40020810, 0) & 15) in (12, 15))
+
 # --- serial status
-bd.uart_rx += b'?'
+bd.uart_rx += b'#?\n'
 run_ms(50)
 s = uart_text()
 check('serial "?" status reply', s.startswith('#? ') and 'relay=0' in s, s)

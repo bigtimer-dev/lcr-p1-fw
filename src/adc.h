@@ -12,6 +12,7 @@
 #define ADC_CH_BAT    8     /* PB0: battery divider (x2) */
 
 extern uint16_t adc_vref_mv;            /* ADC full scale in mV (stock default 4940) */
+extern uint8_t adc_sample_code;         /* sample time code 0..15 */
 
 int adc_init(void);                     /* 0 = ready */
 uint32_t adc_raw(unsigned ch, unsigned n);      /* sum of n conversions (12 bit each) */

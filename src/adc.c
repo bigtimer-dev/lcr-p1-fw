@@ -6,6 +6,7 @@
 #include "hw.h"
 
 uint16_t adc_vref_mv = 4940;
+uint8_t adc_sample_code = 12;                   /* 4-bit sample time code (stock: 12) */
 
 int adc_init(void)
 {
@@ -44,7 +45,7 @@ static uint32_t convert(void)
 
 uint32_t adc_raw(unsigned ch, unsigned n)
 {
-    select(ch, 12);                             /* sample time code as stock */
+    select(ch, adc_sample_code);
     (void)convert();                            /* the data register lags one conversion behind (seen on
                                                    the meter): the first result of every read is stale */
     uint32_t sum = 0;

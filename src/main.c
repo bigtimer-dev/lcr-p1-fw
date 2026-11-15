@@ -154,7 +154,8 @@ int main(void)
     header();
     beep(40);
 
-    int relay_on = 0, page = 0, redraw = 1, low = 0, shown = 0, c_test = 0;
+    int relay_on = 0, page = 0, redraw = 1, low = 0, shown = 0, c_test = 0, cmd_len = 0;
+    char cmd[12];
     int last_t = -1, last_z = -1, last_m = -1, last_r = -1;
     uint32_t last_s = ~0u, idle = g_ms;
     uint32_t raw[NROWS];
@@ -242,14 +243,31 @@ int main(void)
             }
         }
 
+        /* serial commands: '#' + letter [+ number] + CR/LF; anything else is ignored */
         int c = uart_getc();
-        if (c == 'T')
-            c_test = 1;                         /* serial: run a test */
-        if (c == 'D')
-            probe_diag();
-        if (c == 'X')
-            drive_experiment();
-        if (c == '?')
-            uprintf("#? t=%u test=%d zener=%d ir=%d relay=%d adc=%d\r\n", g_ms, t, z, m, relay_on, adc_ok);
+        if (c == '#')
+            cmd_len = 0, cmd[cmd_len++] = '#';
+        else if (c >= 0 && cmd_len > 0 && c != '\r' && c != '\n' && cmd_len < (int)sizeof cmd - 1)
+            cmd[cmd_len++] = (char)c;
+        else if ((c == '\r' || c == '\n') && cmd_len >= 2) {
+            cmd[cmd_len] = 0;
+            unsigned arg = 0;
+            for (int i = 2; i < cmd_len && cmd[i] >= '0' && cmd[i] <= '9'; i++)
+                arg = arg * 10 + (unsigned)(cmd[i] - '0');
+            char k = cmd[1];
+            cmd_len = 0;
+            if (k == 'T')
+                c_test = 1;                     /* run a test */
+            else if (k == 'D')
+                probe_diag();
+            else if (k == 'X')
+                drive_experiment();
+            else if (k == 'S' && arg <= 15)
+                adc_sample_code = (uint8_t)arg, uprintf("#S %u\r\n", arg);
+            else if (k == '?')
+                uprintf("#? t=%u test=%d zener=%d ir=%d relay=%d adc=%d st=%u\r\n", g_ms, t, z, m, relay_on,
+                        adc_ok, adc_sample_code);
+        } else if (c == '\r' || c == '\n')
+            cmd_len = 0;
     }
 }
