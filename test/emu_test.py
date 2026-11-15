@@ -47,7 +47,8 @@ class Board:
         self.inp['C'] |= 1 << 13                        # TEST released (pull-up)
         self.inp['F'] |= 1 << 7                         # ZENER released
         self.events = []                                # (ms, what)
-        self.uart_tx, self.uart_rx = bytearray(), bytearray()
+        self.uart_tx, self.uart_rx = bytearray(), bytearray()   # uart_rx: bytes the PC is sending
+        self.rx_reg, self.rx_ore = None, False                  # single-byte receive register, overrun
         self.lcd = Panel()
         self.ms = 0
         self.first_pa8 = None
@@ -158,10 +159,11 @@ class Board:
             v = self.us & 0xFFFF
         elif a == 0x40012008:
             v = 0x02                                    # SPI: TX empty, not busy
-        elif a == 0x40013800:
-            v = 0x80 | (0x20 if self.uart_rx else 0)
+        elif a == 0x40013800:                           # USART1 status: TX empty, RXNE, ORE
+            v = 0x80 | (0x20 if self.rx_reg is not None else 0) | (0x08 if self.rx_ore else 0)
         elif a == 0x40013804:
-            v = self.uart_rx.pop(0) if self.uart_rx else 0
+            v = self.rx_reg if self.rx_reg is not None else 0
+            self.rx_reg, self.rx_ore = None, False
         elif base in PORTS and off == 0x10:
             p = PORTS[base]
             mode = self.reg.get(base, 0)
@@ -270,8 +272,23 @@ def run_ms(n):
             raise SystemExit(f'emulation error {e} at {uc.reg_read(UC_ARM_REG_PC):#x}')
         pc[0] = uc.reg_read(UC_ARM_REG_PC)
         bd.ms += 1
+        for _ in range(11):                             # ~11 bytes per ms at 115200 baud
+            if not bd.uart_rx:
+                break
+            b = bd.uart_rx.pop(0)
+            if bd.rx_reg is None:
+                bd.rx_reg = b
+            else:
+                bd.rx_ore = True                        # overrun: byte lost (N32: RXNE stays as it was)
         t = struct.unpack('<I', uc.mem_read(G_MS, 4))[0]
         uc.mem_write(G_MS, struct.pack('<I', t + 1))
+
+
+def send(data, gap_ms=2):
+    """PC sends bytes paced gap_ms apart (the USART holds one byte)."""
+    for b in data:
+        bd.uart_rx.append(b)
+        run_ms(gap_ms)
 
 
 def uart_text():
@@ -337,7 +354,7 @@ check('status rows drawn', bd.lcd.count(0xFFFF, 48, 112) > 100 and bd.lcd.count(
 s = uart_text()
 check('ADC readout over serial: battery 4.10 V, raw codes per channel',
       '#A ' in s and 'bat=4100mV' in s and 'BAT=1700' in s and 'REF=2035' in s, s[-200:])
-check('ADC: sample time code 12 on ch8, rank 1 = selected channel', (bd.reg.get(0x40020810, 0) & 15) == 12)
+check('ADC: sample time code 14 on ch8 (settles from 470k), rank 1 = selected channel', (bd.reg.get(0x40020810, 0) & 15) == 14)
 bd.lcd.png(os.path.join(OUTDIR, 'screen_bat.png'))
 check('battery shown on page 0', bd.lcd.count(0x8C33, 112, 128) > 30)
 
@@ -393,13 +410,13 @@ check('beep: buzzer channel enabled then disabled again', bd.reg.get(0x40013420)
 
 # --- serial probe diagnostic with 1k on 1-2: probe 1 via Rl -> divider 1k / (680 + 1k)
 bd.dut = {(0, 1): 1000}
-uart_text(); bd.uart_rx += b'#D\n'; run_ms(400)
+uart_text(); send(b'#D\n'); run_ms(400)
 s = uart_text()
 d = [l for l in s.splitlines() if l.startswith('#D P1 Rl')]
 v = int(d[0].split()[3]) if d else -1
 check('diag: P1 via Rl with 1k to P2 (low) reads ~59 % of full scale', 0.55 < v / 4096 < 0.63
       and '#D end' in s, d)
-uart_text(); bd.uart_rx += b'#X\n'; run_ms(300)
+uart_text(); send(b'#X\n'); run_ms(300)
 s = uart_text()
 check('drive experiment runs and restores', '#X end' in s and bd.pin('B', 3) == 0, s[-200:])
 check('diag: probes shorted again afterwards', bd.pin('B', 3) == 0)
@@ -443,14 +460,24 @@ run_ms(1100)
 uart_text()
 
 # --- stray bytes (e.g. firmware data sent to a running meter) do not trigger commands
-uart_text(); bd.uart_rx += b'T?DX\x00\xffT\n'; run_ms(300)
+uart_text(); send(b'T?DX\x00\xffT\n'); run_ms(300)
 s = uart_text()
 check('stray bytes without "#" are ignored', '#R' not in s and '#?' not in s and '#D' not in s, s[-120:])
-uart_text(); bd.uart_rx += b'#S15\n'; run_ms(50)
-check('#S sets the ADC sample time', '#S 15' in uart_text() and (bd.reg.get(0x40020810, 0) & 15) in (12, 15))
+bd.uart_rx += b'#?\n' * 30; run_ms(200)                  # unpaced burst: overruns
+uart_text(); send(b'#?\n'); run_ms(50)
+check('reception recovers after an overrun', '#? ' in uart_text())
+uart_text(); send(b'#S15\n'); run_ms(50)
+check('#S sets the ADC sample time', '#S 15' in uart_text() and (bd.reg.get(0x40020810, 0) & 15) in (14, 15))
+
+# --- sweep over sample times with 1M on 1-3
+bd.dut = {(0, 2): 1e6}
+uart_text(); send(b'#W\n'); run_ms(5000)
+s = uart_text()
+check('#W sweep measures with codes 12..15', '#W end' in s and s.count('found=10') == 4, s[-300:])
+bd.dut = {}
 
 # --- serial status
-bd.uart_rx += b'#?\n'
+send(b'#?\n')
 run_ms(50)
 s = uart_text()
 check('serial "?" status reply', s.startswith('#? ') and 'relay=0' in s, s)

@@ -6,7 +6,9 @@
 #include "hw.h"
 
 uint16_t adc_vref_mv = 4940;
-uint8_t adc_sample_code = 12;                   /* 4-bit sample time code (stock: 12) */
+uint8_t adc_sample_code = 14;                   /* 4-bit sample time code. Stock uses 12/13; 12 does not settle
+                                                   from 470k sources (1M rejected on the meter), 13 just does,
+                                                   15 gave phantom results: 14 */
 
 int adc_init(void)
 {

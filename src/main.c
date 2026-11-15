@@ -262,7 +262,25 @@ int main(void)
                 probe_diag();
             else if (k == 'X')
                 drive_experiment();
-            else if (k == 'S' && arg <= 15)
+            else if (k == 'W') {                /* sweep: measure with sample time codes 12..15 */
+                uint8_t keep = adc_sample_code;
+                for (uint8_t st = 12; st <= 15; st++) {
+                    adc_sample_code = st;
+                    uprintf("#W st=%u\r\n", st);
+                    int f = measure_run();
+                    uprintf("#W st=%u found=%d vcc=%u\r\n", st, f, measure_vcc());
+                    for (int i = 0; i < measure_resistors(); i++) {
+                        uint8_t ra, rb;
+                        uint32_t rv;
+                        int8_t rs;
+                        measure_resistor(i, &ra, &rb, &rv, &rs);
+                        uprintf("#W   R %u-%u %u e%d\r\n", ra, rb, rv, rs);
+                    }
+                    wdt_feed();
+                }
+                adc_sample_code = keep;
+                uprintf("#W end\r\n");
+            } else if (k == 'S' && arg <= 15)
                 adc_sample_code = (uint8_t)arg, uprintf("#S %u\r\n", arg);
             else if (k == '?')
                 uprintf("#? t=%u test=%d zener=%d ir=%d relay=%d adc=%d st=%u\r\n", g_ms, t, z, m, relay_on,

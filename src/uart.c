@@ -33,7 +33,12 @@ void uart_puts(const char *s)
 
 int uart_getc(void)
 {
-    return UART_STS & 0x20 ? (int)(UART_DAT & 0xFF) : -1;
+    uint32_t sts = UART_STS;
+    if (sts & 0x20)                             /* received a byte */
+        return (int)(UART_DAT & 0xFF);
+    if (sts & 0x08)                             /* overrun without a byte: reading STS then DAT clears it; */
+        (void)UART_DAT;                         /* otherwise reception stays blocked */
+    return -1;
 }
 
 struct sink { char *p; int left; };
