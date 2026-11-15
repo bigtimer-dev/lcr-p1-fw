@@ -475,8 +475,8 @@ void CheckResistor(void)
          *  process results of the resistance measurement
          */
 
-        if (Compare == 1)          /* valid measurement */
         CT_DBG("#C   Compare=%d Value=%u\r\n", Compare, Value);
+        if (Compare == 1)          /* valid measurement */
         {
           Scale = -1;              /* 0.1 Ohms by default */
 

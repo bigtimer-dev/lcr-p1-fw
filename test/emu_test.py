@@ -56,6 +56,7 @@ class Board:
         self.kr = []
         self.adc = {8: 1700, 0: 2035, 2: 0}     # raw codes; ch8 1700 = 4.10 V battery, ch0 2.5 V ref at 5.02 V
         self.us = 0
+        self.v_nodes, self.t_nodes, self.g_nodes = None, 0, [0, 0, 0]
         self.dut = {}                           # {(probe_a, probe_b): ohms}, probes 0..2
         self.vcc = 5.020                        # ADC full scale (V)
         self.vdrive = self.vcc                  # probe pins drive to the ADC full scale (4.39 V seen on the meter was the stale-sample artifact)
@@ -73,6 +74,8 @@ class Board:
             self.kr.append(v)
         self.reg[a] = v
         base, off = a & ~0x3FF, a & 0x3FF
+        if (base in PORTS and off in (0x00, 0x14, 0x18, 0x28)) and PORTS[base] in 'AB':
+            self.settle()                               # nodes move under the old drive until now
         if base in PORTS and off in (0x14, 0x18, 0x28):
             p = PORTS[base]
             old = self.out[p]
@@ -105,13 +108,14 @@ class Board:
         G = [[0.0] * 3 for _ in range(3)]
         I = [0.0] * 3
         for n, pins in enumerate(self.PROBE_PINS):
-            G[n][n] += 1e-10                    # ADC input / leakage
+            G[n][n] += 1 / 66e6                 # leak to ground (meter: 470k pull-up settles 35 mV low)
             for (port, pin), r in zip(pins, (0, 680, 470000)):
                 on, lvl = self.driven(port, pin)
                 if on:
                     g = 1 / (r + (22 if lvl else 20))   # MCU pin resistance high / low
                     G[n][n] += g
                     I[n] += g * self.vdrive * lvl
+        self.g_nodes = [G[n][n] for n in range(3)]   # before links: node's own paths
         links = dict(self.dut)
         if not self.pin('B', 3):                # relay off: probes shorted
             for pair in ((0, 1), (0, 2), (1, 2)):
@@ -119,6 +123,7 @@ class Board:
         for (a, b), r in links.items():
             g = 1 / r
             G[a][a] += g; G[b][b] += g; G[a][b] -= g; G[b][a] -= g
+            self.g_nodes[a] += g * 0.5; self.g_nodes[b] += g * 0.5   # rough: a link helps both nodes settle
         for c in range(3):                      # Gaussian elimination
             p = max(range(c, 3), key=lambda r: abs(G[r][c]))
             G[c], G[p] = G[p], G[c]; I[c], I[p] = I[p], I[c]
@@ -132,8 +137,28 @@ class Board:
             v[r] = (I[r] - sum(G[r][k] * v[k] for k in range(r + 1, 3))) / G[r][r]
         return v
 
+    C_NODE = 2e-9                               # probe node capacitance (fits the meter: 470k-only
+                                                # readings 17-45 mV off the rail after CT's 5 ms waits)
+
+    def settle(self):
+        """Move the probe node voltages towards their DC values over the time since the last update,
+        tau = C_NODE * Thevenin resistance of each node (coupling between nodes ignored for tau)."""
+        target = self.node_volts()
+        now = max(self.us, self.ms * 1000)
+        dt = (now - self.t_nodes) * 1e-6
+        self.t_nodes = now
+        if self.v_nodes is None:
+            self.v_nodes = target
+            return
+        import math
+        for n in range(3):
+            g = self.g_nodes[n]
+            k = 1 - math.exp(-dt * g / self.C_NODE) if g > 0 else 0
+            self.v_nodes[n] += (target[n] - self.v_nodes[n]) * k
+
     def probe_adc(self, ch):
-        v = self.node_volts()[{1: 0, 3: 1, 6: 2}[ch]]
+        self.settle()
+        v = self.v_nodes[{1: 0, 3: 1, 6: 2}[ch]]
         return max(0, min(4095, int(v / self.vcc * 4096)))
 
     def read(self, a):
@@ -391,6 +416,8 @@ def resistors(out):
             if l.startswith('#R R ')]
 
 out, relay = measure({})
+if os.environ.get('DUMP'):
+    print('\n'.join(l for l in out.splitlines() if l.startswith('#C')))
 check('no part: "no component", ADC full scale from 2.5 V ref, drive level measured', 'found=0' in out
       and 'ref=1' in out and 'fs=502' in out and 'vcc=50' in out, out[-160:])
 check('relay frees the probes for the test and shorts them again after', relay[:1] == ['PB3=1'] and relay[-1:] == ['PB3=0']
@@ -403,6 +430,13 @@ for dut, pins, ohms, tol in (({(0, 1): 1000}, '1-2', 1000, 0.01), ({(1, 2): 360}
     check(f'resistor {ohms:g} ohm on {pins}: {r}', ok, out[-200:])
 run_ms(2500)                                        # result must survive the once-a-second refresh
 bd.lcd.png(os.path.join(OUTDIR, 'screen_resistor.png'))
+# edge case seen on the meter: open pairs read just under CheckResistor's 20 mV "discharged" limit
+# and get further into the check; they must still not become (phantom) resistors
+bd.C_NODE = 1.85e-9
+out, _ = measure({(0, 2): 360})
+r = resistors(out)
+check('no phantom resistors when open pairs read just under 20 mV', len(r) == 1 and r[0][0] == '1-3', r)
+bd.C_NODE = 2e-9
 check('result screen stays (no ADC rows drawn over it)', bd.lcd.count(0xB47F, 60, 92) > 150
       and bd.lcd.count(0xFFFF, 0, 128) < 50, (bd.lcd.count(0xB47F, 60, 92), bd.lcd.count(0xFFFF, 0, 128)))
 bd.dut = {}
