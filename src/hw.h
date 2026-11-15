@@ -91,6 +91,19 @@ enum { PULL_NONE, PULL_UP, PULL_DOWN };
 #define IRQ_TIM6   20
 #define NVIC_ISER  R32(0xE000E100u)
 
+/* ADC (12 bit, reference = VDD, about 5 V on this board) */
+#define ADC        0x40020800u
+#define ADC_STS    R32(ADC + 0x00)    /* bit1 end of conversion */
+#define ADC_CR1    R32(ADC + 0x04)
+#define ADC_CR2    R32(ADC + 0x08)    /* bit0 on, [19:17] trigger (7 = software), 0x500000 = start */
+#define ADC_SAMPT1 R32(ADC + 0x0C)    /* 4-bit sample time per channel: ch16+ */
+#define ADC_SAMPT2 R32(ADC + 0x10)    /* ch8..15 */
+#define ADC_SAMPT3 R32(ADC + 0x14)    /* ch0..7 */
+#define ADC_RSEQ1  R32(ADC + 0x30)    /* [23:20] sequence length - 1 */
+#define ADC_RSEQ3  R32(ADC + 0x38)    /* [4:0] channel of rank 1 */
+#define ADC_DAT    R32(ADC + 0x50)
+#define ADC_CR3    R32(ADC + 0x54)    /* bit5 ready, bit6 busy (calibration) */
+
 /* IWDG (independent watchdog, LSI ~40 kHz): a hang resets the chip, which releases the power latch */
 #define IWDG_KR    R32(0x40003000u)   /* 0xCCCC start, 0xAAAA reload, 0x5555 unlock PR/RLR */
 #define IWDG_PR    R32(0x40003004u)

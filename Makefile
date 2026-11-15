@@ -31,6 +31,7 @@ build:
 
 test: build/lcrp1-fw.bin
 	$(PY) test/emu_test.py build/lcrp1-fw.bin build/lcrp1-fw.elf
+	$(PY) test/emu_test.py --lowbat build/lcrp1-fw.bin build/lcrp1-fw.elf | grep -v '^PASS'
 
 clean:
 	rm -rf build

@@ -17,8 +17,10 @@ import zlib
 from unicorn import UC_ARCH_ARM, UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE, UC_MODE_MCLASS, UC_MODE_THUMB, Uc, UcError
 from unicorn.arm_const import UC_ARM_REG_PC, UC_ARM_REG_SP
 
-BIN, ELF = sys.argv[1], sys.argv[2]
-STOCK_LOG = sys.argv[3] if len(sys.argv) > 3 else os.path.expanduser('~/Work/lcr-p1/hwmap/boot_mmio.log')
+LOWBAT = '--lowbat' in sys.argv
+args = [a for a in sys.argv[1:] if a != '--lowbat']
+BIN, ELF = args[0], args[1]
+STOCK_LOG = args[2] if len(args) > 2 else os.path.expanduser('~/Work/lcr-p1/hwmap/boot_mmio.log')
 OUTDIR = os.path.dirname(os.path.abspath(BIN))
 BASE = 0x08001800
 img = open(BIN, 'rb').read()
@@ -51,6 +53,7 @@ class Board:
         self.first_pa8 = None
         self.writes = 0
         self.kr = []
+        self.adc = {8: 1700, 0: 2050, 1: 3, 3: 5, 6: 4, 2: 0}   # raw codes; ch8 1700 = 4.10 V battery
 
     def pin(self, port, n):
         return self.out[port] >> n & 1
@@ -91,6 +94,13 @@ class Board:
         elif a == 0x40021004:                           # RCC_CFGR: switch status after SW=PLL
             if v & 3 == 2:
                 v = (v & ~0xC008) | 0x4000
+        elif a == 0x40020854:
+            v |= 0x20                                   # ADC ready, not calibrating
+            v &= ~0x40
+        elif a == 0x40020800:
+            v = 0x02                                    # ADC: conversion done
+        elif a == 0x40020850:
+            v = self.adc.get(self.reg.get(0x40020838, 0) & 31, 0)
         elif a == 0x40012008:
             v = 0x02                                    # SPI: TX empty, not busy
         elif a == 0x40013800:
@@ -232,7 +242,8 @@ check('NVIC: IRQ20 enabled; SysTick interrupt not used', r(0xE000E100, 0) >> 20 
 check('watchdog started (~2 s) and fed', r(0x40003004) == 4 and r(0x40003008) == 1250
       and 0xCCCC in bd.kr and bd.kr[-1] == 0xAAAA, bd.kr[-3:])
 check('relay off and HV boost off after init', bd.pin('B', 3) == 0 and bd.pin('F', 6) == 0)
-check('UART banner', 'lcrp1-fw' in uart_text())
+s = uart_text()
+check('UART banner + ADC ready', 'lcrp1-fw' in s and 'adc init 0' in s, s)
 
 # LCD init vs stock
 init = [c for c in bd.lcd.cmds if c[0] not in (0x2A, 0x2B, 0x2C)]
@@ -268,6 +279,25 @@ bd.lcd.png(os.path.join(OUTDIR, 'screen_boot.png'))
 check('title drawn in accent colour', bd.lcd.count(0xB47F, 0, 26) > 100, bd.lcd.count(0xB47F, 0, 26))
 check('status rows drawn', bd.lcd.count(0xFFFF, 48, 112) > 100 and bd.lcd.count(0x8C33, 48, 64) > 20)
 
+s = uart_text()
+check('ADC readout over serial: battery 4.10 V, raw codes per channel',
+      '#A ' in s and 'bat=4100mV' in s and 'BAT=1700' in s and 'REF=2050' in s, s[-200:])
+check('ADC: sample time code 12 on ch8, rank 1 = selected channel', (bd.reg.get(0x40020810, 0) & 15) == 12)
+bd.lcd.png(os.path.join(OUTDIR, 'screen_bat.png'))
+check('battery shown on page 0', bd.lcd.count(0x8C33, 112, 128) > 30)
+
+if LOWBAT:                                              # second pass: battery drops to 3.13 V
+    bd.adc[8] = 1300
+    run_ms(4000)
+    check('3.13 V for < 5 s: still on', bd.pin('A', 8) == 1)
+    run_ms(3000)
+    s = uart_text()
+    check('low battery: relay released, latch released, logged', bd.pin('A', 8) == 0 and bd.pin('B', 3) == 0
+          and 'power off (low battery)' in s, s[-120:])
+    bd.lcd.png(os.path.join(OUTDIR, 'screen_lowbat.png'))
+    print(f'{len(fails)} failed' if fails else 'all passed (low battery)')
+    sys.exit(1 if fails else 0)
+
 # --- short TEST: relay toggles, beep
 bd.set_in('C', 13, 0)
 run_ms(150)
@@ -282,17 +312,37 @@ bd.lcd.png(os.path.join(OUTDIR, 'screen_relay.png'))
 bd.set_in('F', 7, 0)
 run_ms(100)
 bd.set_in('F', 7, 1)
+run_ms(400)
+bd.set_in('F', 7, 0)
 run_ms(100)
+bd.set_in('F', 7, 1)
+run_ms(400)
 s = uart_text()
-check('ZENER key logged, HV boost still off', 'key ZENER' in s and bd.pin('F', 6) == 0, s)
+check('ZENER switches page 1 and back, HV boost still off',
+      'key ZENER: page 1' in s and 'key ZENER: page 0' in s and bd.pin('F', 6) == 0, s)
 
 # --- mode switch
 bd.set_in('C', 14, 1)
-run_ms(100)
+run_ms(400)
 s = uart_text()
 check('mode switch IR shown + logged', 'mode IR' in s, s)
 bd.set_in('C', 14, 0)
-run_ms(100)
+run_ms(400)
+uart_text()
+
+# --- ADC page
+bd.set_in('F', 7, 0); run_ms(100); bd.set_in('F', 7, 1); run_ms(1200)
+bd.lcd.png(os.path.join(OUTDIR, 'screen_adc.png'))
+check('ADC page drawn (ZENER switches page)', bd.lcd.count(0xB47F, 0, 16) > 30 and bd.lcd.count(0x8C33, 0, 128) > 100)
+bd.set_in('F', 7, 0); run_ms(100); bd.set_in('F', 7, 1); run_ms(1200)
+uart_text()
+
+# --- implausible battery reading (0 V): never switches off
+bd.adc[8] = 0
+run_ms(7000)
+check('implausible battery reading does not switch off', bd.pin('A', 8) == 1)
+bd.adc[8] = 1700
+run_ms(1100)
 uart_text()
 
 # --- serial status
@@ -303,7 +353,7 @@ check('serial "?" status reply', s.startswith('#? ') and 'relay=1' in s, s)
 
 # --- long TEST: power off
 bd.set_in('C', 13, 0)
-run_ms(1500)
+run_ms(2500)
 s = uart_text()
 check('long TEST: relay released, PA8 cleared, logged', bd.pin('A', 8) == 0 and bd.pin('B', 3) == 0
       and 'power off (key)' in s, s)
