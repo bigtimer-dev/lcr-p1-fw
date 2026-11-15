@@ -1,15 +1,16 @@
 /* SPDX-License-Identifier: EUPL-1.2
- * LCR-P1 open firmware, phase 2 step 1: ADC explorer on top of the phase 1 bring-up.
- * Page 0: key / switch / relay state. Page 1 (ZENER switches pages): ADC readings.
- * TEST toggles the relay, hold TEST 1 s = off, 3 min idle = off, low battery = off.
- * The HV boost is never enabled and no probe pin is driven.
+ * LCR-P1 open firmware, phase 2 step 2: ComponentTester probing (resistors so far).
+ * Page 0: TEST runs a probing cycle and shows the result. Page 1 (ZENER switches pages): ADC readings.
+ * Hold TEST 1 s = off, 3 min idle = off, low battery = off. The HV boost is never enabled.
  */
 #include "adc.h"
+#include "ct_hal.h"
+#include "measure.h"
 #include "board.h"
 #include "lcd.h"
 #include "uart.h"
 
-#define VERSION   "0.2"
+#define VERSION   "0.3"
 #define IDLE_OFF_MS (3u * 60 * 1000)
 #define LOWBAT_MV 3300          /* as stock: switch off at or below this */
 
@@ -47,6 +48,33 @@ static void off(const char *why)
     power_off();
 }
 
+static void show_result(int found, uint32_t ms)
+{
+    char v[16], line[24];
+    lcd_fill(0, 45, LCD_W, LCD_H - 45, C_BLACK);
+    uprintf("#R found=%d vcc=%u ref=%d ms=%u\r\n", found, measure_vcc(), measure_ref_ok(), ms);
+    int n = measure_resistors();
+    if (n) {
+        lcd_text(4, 48, n > 1 ? "Resistors" : "Resistor", &font16, C_LABEL, C_BLACK);
+        for (int i = 0; i < n; i++) {
+            uint8_t a, b;
+            uint32_t value;
+            int8_t scale;
+            measure_resistor(i, &a, &b, &value, &scale);
+            measure_format(v, sizeof v, value, scale, CH_OHM);
+            fmt(line, sizeof line, "%u-%u", a, b);
+            lcd_text(4, 68 + 26 * i, line, &font16, C_LABEL, C_BLACK);
+            lcd_text(36, 64 + 26 * i, v, &font24, C_ACCENT, C_BLACK);
+            uprintf("#R R %u-%u %u e%d\r\n", a, b, value, scale);
+        }
+    } else {
+        lcd_text(4, 56, found == 1 ? "error" : "no component", &font16, C_WHITE, C_BLACK);
+        lcd_text(4, 76, "(R only so far)", &font16, C_DIM, C_BLACK);
+    }
+    fmt(line, sizeof line, "Vcc %u.%03uV%s", measure_vcc() / 1000, measure_vcc() % 1000, measure_ref_ok() ? "" : "?");
+    lcd_text(4, 112, line, &font16, C_DIM, C_BLACK);
+}
+
 int main(void)
 {
     board_init();
@@ -55,10 +83,12 @@ int main(void)
     lcd_init();
     int adc_ok = adc_init();
     uprintf("adc init %d\r\n", adc_ok);
+    ct_hal_init();
+    measure_init();
     header();
     beep(40);
 
-    int relay_on = 0, page = 0, redraw = 1, low = 0;
+    int relay_on = 0, page = 0, redraw = 1, low = 0, shown = 0, c_test = 0;
     int last_t = -1, last_z = -1, last_m = -1, last_r = -1;
     uint32_t last_s = ~0u, idle = g_ms;
     uint32_t raw[NROWS];
@@ -70,13 +100,20 @@ int main(void)
         int ev = key_poll();
         if (ev != KEY_NONE)
             idle = g_ms;
-        if (ev == KEY_TEST) {
-            relay_on = !relay_on;
-            relay(relay_on);
-            beep(30);
-            uprintf("key TEST: relay %s\r\n", relay_on ? "on" : "off");
+        if (ev == KEY_TEST || c_test) {
+            c_test = 0;                         /* no beep here: the test blocks the loop, it would last */
+            if (page)
+                page = 0, redraw = 1, header();
+            lcd_fill(0, 45, LCD_W, LCD_H - 45, C_BLACK);
+            lcd_text(4, 56, "probing...", &font16, C_LABEL, C_BLACK);
+            uint32_t t0 = g_ms;
+            int found = measure_run();
+            show_result(found, g_ms - t0);
+            redraw = 0, last_t = last_z = last_r = last_m = -2;     /* keep the result on screen */
+            shown = 1;
+            beep(found ? 60 : 20);
         } else if (ev == KEY_ZENER) {
-            page = !page, redraw = 1;
+            page = !page, redraw = 1, shown = 0;
             beep(20);
             uprintf("key ZENER: page %d\r\n", page);
         }
@@ -99,7 +136,7 @@ int main(void)
         }
 
         uint32_t s = g_ms / 1000;
-        if (page == 0) {
+        if (page == 0 && !shown) {
             if (t != last_t)
                 row(48, "TEST", t ? "down" : "up", t ? C_ACCENT : C_WHITE);
             if (z != last_z)
@@ -120,10 +157,10 @@ int main(void)
             for (unsigned i = 0; i < NROWS; i++)
                 uprintf(" %s=%u", adc_rows[i].name, raw[i]);
             uprintf("\r\n");
-            if (page == 0) {
+            if (page == 0 && !shown) {
                 fmt(buf, sizeof buf, "%u.%02uV %us", bat / 1000, bat % 1000 / 10, s);
                 row(112, "BAT", buf, C_LABEL);
-            } else {
+            } else if (page == 1) {
                 for (unsigned i = 0; i < NROWS; i++) {
                     uint32_t mv = raw[i] * adc_rows[i].mul * adc_vref_mv / 4096;
                     fmt(buf, sizeof buf, "%5u %4u", mv, raw[i]);
@@ -140,6 +177,8 @@ int main(void)
         }
 
         int c = uart_getc();
+        if (c == 'T')
+            c_test = 1;                         /* serial: run a test */
         if (c == '?')
             uprintf("#? t=%u test=%d zener=%d ir=%d relay=%d adc=%d\r\n", g_ms, t, z, m, relay_on, adc_ok);
     }

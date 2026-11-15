@@ -53,7 +53,10 @@ class Board:
         self.first_pa8 = None
         self.writes = 0
         self.kr = []
-        self.adc = {8: 1700, 0: 2050, 1: 3, 3: 5, 6: 4, 2: 0}   # raw codes; ch8 1700 = 4.10 V battery
+        self.adc = {8: 1700, 0: 2035, 2: 0}     # raw codes; ch8 1700 = 4.10 V battery, ch0 2.5 V ref at 5.02 V
+        self.us = 0
+        self.dut = {}                           # {(probe_a, probe_b): ohms}, probes 0..2
+        self.vcc = 5.020
 
     def pin(self, port, n):
         return self.out[port] >> n & 1
@@ -86,6 +89,50 @@ class Board:
         elif a == 0x40013804:
             self.uart_tx.append(v & 0xFF)
 
+    # probe pins: (port, pin) for direct, Rl, Rh of probes 1..3
+    PROBE_PINS = [(('A', 1), ('A', 4), ('A', 5)), (('A', 3), ('A', 7), ('B', 1)), (('A', 6), ('B', 2), ('B', 10))]
+    PORT_BASE = {'A': 0x40010800, 'B': 0x40010C00}
+
+    def driven(self, port, pin):
+        mode = self.reg.get(self.PORT_BASE[port], 0xFFFFFFFF) >> 2 * pin & 3
+        return mode == 1, self.out[port] >> pin & 1
+
+    def node_volts(self):
+        """Nodal analysis of the three probe nodes (V)."""
+        G = [[0.0] * 3 for _ in range(3)]
+        I = [0.0] * 3
+        for n, pins in enumerate(self.PROBE_PINS):
+            G[n][n] += 1e-10                    # ADC input / leakage
+            for (port, pin), r in zip(pins, (0, 680, 470000)):
+                on, lvl = self.driven(port, pin)
+                if on:
+                    g = 1 / (r + (22 if lvl else 20))   # MCU pin resistance high / low
+                    G[n][n] += g
+                    I[n] += g * self.vcc * lvl
+        links = dict(self.dut)
+        if not self.pin('B', 3):                # relay off: probes shorted
+            for pair in ((0, 1), (0, 2), (1, 2)):
+                links[pair] = 0.1
+        for (a, b), r in links.items():
+            g = 1 / r
+            G[a][a] += g; G[b][b] += g; G[a][b] -= g; G[b][a] -= g
+        for c in range(3):                      # Gaussian elimination
+            p = max(range(c, 3), key=lambda r: abs(G[r][c]))
+            G[c], G[p] = G[p], G[c]; I[c], I[p] = I[p], I[c]
+            for r in range(c + 1, 3):
+                f = G[r][c] / G[c][c]
+                for k in range(c, 3):
+                    G[r][k] -= f * G[c][k]
+                I[r] -= f * I[c]
+        v = [0.0] * 3
+        for r in (2, 1, 0):
+            v[r] = (I[r] - sum(G[r][k] * v[k] for k in range(r + 1, 3))) / G[r][r]
+        return v
+
+    def probe_adc(self, ch):
+        v = self.node_volts()[{1: 0, 3: 1, 6: 2}[ch]]
+        return max(0, min(4095, int(v / self.vcc * 4096)))
+
     def read(self, a):
         v = self.reg.get(a, 0)
         base, off = a & ~0x3FF, a & 0x3FF
@@ -100,7 +147,11 @@ class Board:
         elif a == 0x40020800:
             v = 0x02                                    # ADC: conversion done
         elif a == 0x40020850:
-            v = self.adc.get(self.reg.get(0x40020838, 0) & 31, 0)
+            ch = self.reg.get(0x40020838, 0) & 31
+            v = self.probe_adc(ch) if ch in (1, 3, 6) else self.adc.get(ch, 0)
+        elif a == 0x40000824:                           # TIM3 counter: 1 us per read, never behind the ms tick
+            self.us = max(self.us + 1, self.ms * 1000)
+            v = self.us & 0xFFFF
         elif a == 0x40012008:
             v = 0x02                                    # SPI: TX empty, not busy
         elif a == 0x40013800:
@@ -281,7 +332,7 @@ check('status rows drawn', bd.lcd.count(0xFFFF, 48, 112) > 100 and bd.lcd.count(
 
 s = uart_text()
 check('ADC readout over serial: battery 4.10 V, raw codes per channel',
-      '#A ' in s and 'bat=4100mV' in s and 'BAT=1700' in s and 'REF=2050' in s, s[-200:])
+      '#A ' in s and 'bat=4100mV' in s and 'BAT=1700' in s and 'REF=2035' in s, s[-200:])
 check('ADC: sample time code 12 on ch8, rank 1 = selected channel', (bd.reg.get(0x40020810, 0) & 15) == 12)
 bd.lcd.png(os.path.join(OUTDIR, 'screen_bat.png'))
 check('battery shown on page 0', bd.lcd.count(0x8C33, 112, 128) > 30)
@@ -298,15 +349,43 @@ if LOWBAT:                                              # second pass: battery d
     print(f'{len(fails)} failed' if fails else 'all passed (low battery)')
     sys.exit(1 if fails else 0)
 
-# --- short TEST: relay toggles, beep
-bd.set_in('C', 13, 0)
-run_ms(150)
-bd.set_in('C', 13, 1)
-run_ms(150)
-s = uart_text()
-check('short TEST: relay on + log line', bd.pin('B', 3) == 1 and 'key TEST: relay on' in s, s)
-check('beep: buzzer channel enabled then disabled again', bd.reg.get(0x40013420) == 0x12)
-bd.lcd.png(os.path.join(OUTDIR, 'screen_relay.png'))
+# --- measurements: TEST runs a ComponentTester probing cycle on the modelled probe network
+def measure(dut, max_ms=8000):
+    bd.dut = dict(dut)
+    uart_text()
+    ev0 = len(bd.events)
+    bd.set_in('C', 13, 0); run_ms(80); bd.set_in('C', 13, 1)
+    out = ''
+    for _ in range(max_ms // 100):
+        run_ms(100)
+        out += uart_text()
+        if '#R found' in out:
+            run_ms(600); out += uart_text()     # result screen + result beep
+            break
+    relay = [e for _, e in bd.events[ev0:] if e.startswith('PB3=')]
+    return out, relay
+
+def resistors(out):
+    return [(l.split()[2], int(l.split()[3]) * 10 ** int(l.split()[4][1:])) for l in out.splitlines()
+            if l.startswith('#R R ')]
+
+out, relay = measure({})
+check('no part: "no component", Vcc from the 2.5 V reference', 'found=0' in out and 'ref=1' in out
+      and 'vcc=502' in out, out[-160:])
+check('relay frees the probes for the test and shorts them again after', relay[:1] == ['PB3=1'] and relay[-1:] == ['PB3=0']
+      and bd.pin('B', 3) == 0, relay)
+for dut, pins, ohms, tol in (({(0, 1): 1000}, '1-2', 1000, 0.01), ({(1, 2): 360}, '2-3', 360, 0.01),
+                             ({(0, 2): 1e6}, '1-3', 1e6, 0.02), ({(0, 1): 4.7 + 0.2}, '1-2', 4.7, 0.03)):   # 0.2 ohm probe leads (R_ZERO)
+    out, _ = measure(dut)
+    r = resistors(out)
+    ok = len(r) == 1 and r[0][0] == pins and abs(r[0][1] - ohms) <= tol * ohms
+    check(f'resistor {ohms:g} ohm on {pins}: {r}', ok, out[-200:])
+run_ms(2500)                                        # result must survive the once-a-second refresh
+bd.lcd.png(os.path.join(OUTDIR, 'screen_resistor.png'))
+check('result screen stays (no ADC rows drawn over it)', bd.lcd.count(0xB47F, 60, 92) > 150
+      and bd.lcd.count(0xFFFF, 0, 128) < 50, (bd.lcd.count(0xB47F, 60, 92), bd.lcd.count(0xFFFF, 0, 128)))
+bd.dut = {}
+check('beep: buzzer channel enabled then disabled again', bd.reg.get(0x40013420) == 0x12, hex(bd.reg.get(0x40013420, 0)))
 
 # --- ZENER: logged, HV stays off
 bd.set_in('F', 7, 0)
@@ -349,13 +428,13 @@ uart_text()
 bd.uart_rx += b'?'
 run_ms(50)
 s = uart_text()
-check('serial "?" status reply', s.startswith('#? ') and 'relay=1' in s, s)
+check('serial "?" status reply', s.startswith('#? ') and 'relay=0' in s, s)
 
 # --- long TEST: power off
 bd.set_in('C', 13, 0)
 run_ms(2500)
 s = uart_text()
-check('long TEST: relay released, PA8 cleared, logged', bd.pin('A', 8) == 0 and bd.pin('B', 3) == 0
+check('long TEST: PA8 cleared, relay off, logged', bd.pin('A', 8) == 0 and bd.pin('B', 3) == 0
       and 'power off (key)' in s, s)
 bd.lcd.png(os.path.join(OUTDIR, 'screen_off.png'))
 check('HV boost pin never set', not any(e == 'PF6=1' for _, e in bd.events))

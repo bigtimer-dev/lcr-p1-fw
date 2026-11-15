@@ -17,7 +17,7 @@ then press **TEST** to enter update mode at any time, so stock firmware can alwa
 |---|---|---|
 | 0 | hardware map | done |
 | 1 | bring-up: clock, power latch, LCD, keys, mode switch, relay, buzzer, backlight, USB serial, watchdog | done, runs on the meter |
-| 2 | measurement core (probes, ADC, R / C / diode / transistor ...) | next |
+| 2 | measurement core: ADC, probe layer + ComponentTester resistor check done; C, diodes, transistors next | in progress |
 | 3 | IR decoding, serial protocol, UI polish | |
 
 Phase 1 shows the key, switch and relay states. TEST toggles the relay, ZENER beeps (the HV boost is never
@@ -35,6 +35,14 @@ lcrp1 flash build/lcrp1-fw.bin   # from github.com/bigtimer-dev/lcr-p1-linux, me
 
 The emulator test checks the power latch, clock setup, that the LCD init is byte-identical to what the stock
 firmware sends, keys, relay, buzzer and that the HV boost pin is never set.
+
+## ComponentTester code
+
+`ct/upstream/` holds the unmodified ComponentTester 1.57m sources (© Markus Reschke, EUPL-1.2, from
+github.com/madires/Transistortester-Warehouse). `tools/ctport.py` converts the files in use into `ct/ported/`:
+Latin-1 to UTF-8, the AVR port register statements (`R_DDR = x;` ...) into calls to the LCR-P1 probe layer
+(`src/ct_hal.c`), a few marked MCU-specific blocks, and the board selections in `config.h`. The board
+configuration is `ct/config_lcrp1.h`. Re-run the script after an upstream update.
 
 ## Licence
 
