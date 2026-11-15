@@ -95,15 +95,16 @@ static void vfmt(struct sink *k, const char *f, va_list ap)
             while (s[n])
                 n++;
             break;
-        case 'd': case 'u': case 'x': {
-            int base = *f == 'x' ? 16 : 10, neg = 0;
+        case 'd': case 'u': case 'x': case 'X': {
+            int base = *f == 'x' || *f == 'X' ? 16 : 10, neg = 0;
+            const char *dig = *f == 'X' ? "0123456789ABCDEF" : "0123456789abcdef";
             int iv = va_arg(ap, int);
             v = (unsigned)iv;
             if (*f == 'd' && iv < 0)
                 neg = 1, v = -(unsigned)iv;
             char *e = buf + sizeof buf, *p = e;
             do
-                *--p = "0123456789abcdef"[v % base];
+                *--p = dig[v % base];
             while (v /= base);
             if (neg)
                 *--p = '-';

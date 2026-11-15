@@ -138,6 +138,8 @@ class Board:
         self.inp = {p: 0 for p in 'ABCF'}
         self.inp['C'] |= 1 << 13                        # TEST released (pull-up)
         self.inp['F'] |= 1 << 7                         # ZENER released
+        self.inp['A'] |= 1 << 11                        # IR receiver idle (high)
+        self.ir = None                                  # (start us, [mark, space, mark ...] us) on PA11
         self.events = []                                # (ms, what)
         self.uart_tx, self.uart_rx = bytearray(), bytearray()   # uart_rx: bytes the PC is sending
         self.rx_reg, self.rx_ore = None, False                  # single-byte receive register, overrun
@@ -160,6 +162,21 @@ class Board:
         self.esr = {}                           # {(probe_a, probe_b): ohms} series resistance of self.caps
         self.ind = {}                           # {(probe_a, probe_b): henries} in series with self.dut[pair]
         self.tc_arm = 0                         # time the capture got enabled (CCER)
+
+    def ir_level(self, now):
+        """PA11 while an IR frame plays: low during marks."""
+        t0, durs = self.ir
+        t = now - t0
+        if t < 0:
+            return 1
+        for i, d in enumerate(durs):
+            if t < d:
+                return 0 if i % 2 == 0 else 1
+            t -= d
+        return 1
+
+    def ir_playing(self):
+        return self.ir is not None and max(self.us, self.ms * 1000) < self.ir[0] + sum(self.ir[1]) + 60000
 
     def pin(self, port, n):
         return self.out[port] >> n & 1
@@ -497,7 +514,9 @@ class Board:
                 self.adc_dat, self.adc_pending = self.adc_pending[1], None
             v = self.adc_dat
         elif a == 0x40000824:                           # TIM3 counter: 1 us per read, never behind the ms tick
-            self.us = max(self.us + 1, self.ms * 1000)
+            # (8 us per read while an IR frame plays: the polling loop keeps pace with the ms tick, so
+            #  its time has no 1 ms jumps)
+            self.us = max(self.us + (8 if self.ir_playing() else 1), self.ms * 1000)
             v = int(self.us) & 0xFFFF
         elif a == TC_BASE + 0x10:
             if self.tc_run:
@@ -520,7 +539,10 @@ class Board:
             p = PORTS[base]
             mode = self.reg.get(base, 0)
             outs = sum(1 << n for n in range(16) if mode >> 2 * n & 3 == 1)
-            v = (self.out[p] & outs) | (self.inp[p] & ~outs)
+            inp = self.inp[p]
+            if p == 'A' and self.ir is not None:
+                inp = (inp & ~(1 << 11)) | self.ir_level(max(self.us, self.ms * 1000)) << 11
+            v = (self.out[p] & outs) | (inp & ~outs)
         elif base in PORTS and off == 0x14:
             v = self.out[PORTS[base]]
         return v
@@ -892,6 +914,99 @@ def ind_tests():
         check(f'plain {ohms} Ohm resistor: no inductance', '#R L ' not in out and '#R R 1-2' in out, out[-200:])
     bd.ind = {}
 
+# ---- IR remotes (generators as in lcr-p1-linux firmware/test/ir_test.py; +100 us marks, -100 us spaces)
+def _skew(ms):
+    return [d + (100 if i % 2 == 0 else -100) for i, d in enumerate(ms)]
+
+def _pd(lead, b4):
+    out = [lead, 4500]
+    for k in range(32):
+        out += [560, 1690 if b4[k >> 3] >> (k & 7) & 1 else 560]
+    return _skew(out + [560])
+
+def _sony(cmd, addr, nb):
+    v, out = cmd | addr << 7, [2400]
+    for k in range(nb):
+        out += [600, 1200 if v >> k & 1 else 600]
+    return _skew(out)
+
+def _rc5(toggle, addr, cmd):
+    bits = [1, 1 if cmd < 64 else 0, toggle] + [addr >> i & 1 for i in range(4, -1, -1)] + [cmd >> i & 1 for i in range(5, -1, -1)]
+    halves = []
+    for b in bits:
+        halves += [0, 1] if b else [1, 0]
+    halves = halves[1:]
+    while halves[-1] == 0:
+        halves.pop()
+    durs, cur, n = [], halves[0], 0
+    for h in halves:
+        if h == cur:
+            n += 1
+        else:
+            durs.append((cur, n)); cur, n = h, 1
+    durs.append((cur, n))
+    return [n * 889 + (100 if lvl else -100) for lvl, n in durs]
+
+def _gree(b8):
+    b8 = list(b8)
+    b8[7] = (b8[7] & 15) | ((10 + sum(x & 15 for x in b8[:4]) + sum(x >> 4 for x in b8[4:7])) & 15) << 4
+    bits = lambda bs: [x >> k & 1 for x in bs for k in range(8)]
+    out = [9000, 4500]
+    for b in bits(b8[:4]) + [0, 1, 0]:
+        out += [560, 1690 if b else 560]
+    out += [560, 20000]
+    for b in bits(b8[4:]):
+        out += [560, 1690 if b else 560]
+    return _skew(out + [560]), b8
+
+def ir_play(durs, ms=None):
+    uart_text()
+    bd.ir = (max(bd.us, bd.ms * 1000) + 2000, list(durs))
+    run_ms(ms or sum(durs) // 1000 + 400)
+    bd.ir = None
+    return uart_text()
+
+def ir_tests():
+    bd.set_in('C', 14, 1)
+    run_ms(300)
+    s = uart_text()
+    check('mode switch IR shown + logged', 'mode IR' in s, s)
+    g, g8 = _gree([0x09, 0x08, 0x60, 0x50, 0, 0xC0, 0, 0])
+    cases = [('NEC 04/08', _pd(9000, [0x04, 0xFB, 0x08, 0xF7]), '#I NEC 04 FB 08 F7'),
+             ('Samsung 07/02', _pd(4500, [0x07, 0x07, 0x02, 0xFD]), '#I Samsung 07 07 02 FD'),
+             ('Sony12 a1 c21', _sony(21, 1, 12), '#I Sony12 00 01 00 15'),
+             ('Sony15 a0x97 c0x12', _sony(0x12, 0x97, 15), '#I Sony15 00 97 00 12'),
+             ('Sony20 a0x1a5b c0x3c', _sony(0x3C, 0x1A5B, 20), '#I Sony20 1A 5B 00 3C'),
+             ('RC5 a5 c12 toggle 1', _rc5(1, 5, 12), '#I RC5 00 05 01 0C'),
+             ('RC5 a0 c70 (field bit) toggle 0', _rc5(0, 0, 70), '#I RC5 00 00 00 46'),
+             ('Gree AC', g, '#I AC Gree ' + ' '.join('%02X' % x for x in g8))]
+    for name, durs, want in cases:
+        out = ir_play(durs)
+        check(f'IR {name}: {want}', want + '\r\n' in out, out[-200:])
+        if name == 'NEC 04/08':
+            bd.lcd.png(os.path.join(OUTDIR, 'screen_ir.png'))
+            check('IR result drawn (address/command rows)', bd.lcd.count(0xB47F, 64, 120) > 200)
+    out = ir_play(_pd(9000, [0x04, 0xFB, 0x08, 0xF7]) + [40000] + _skew([9000, 2250, 560]))
+    check('IR NEC + repeat frame: decoded once', out.count('#I NEC') == 1, out[-200:])
+    out = ir_play([300, 7000, 120])
+    check('IR noise: unknown, timings over serial', '#I raw 3:' in out and '#I NEC' not in out, out[-200:])
+    import json
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ir_ac.jsonl')
+    real = [[int(x) for x in json.loads(l)['fields']['timings_us'].split()] for l in open(path)]
+    good = 0
+    for t in real:
+        out = ir_play(t)
+        good += '#I AC Gree ' in out and f'#I raw {len(t)}:' in out
+    check(f'IR: {good}/{len(real)} real Gree AC captures decoded (+ raw dump)', good == len(real))
+    bd.set_in('C', 14, 0)
+    run_ms(400)
+    s = uart_text()
+    check('back to normal mode from IR', 'mode normal' in s, s)
+
+if os.environ.get('IR_ONLY'):
+    ir_tests()
+    sys.exit(0)
+
 if os.environ.get('IND_ONLY'):
     ind_tests()
     sys.exit(0)
@@ -1054,13 +1169,8 @@ s = uart_text()
 check('ZENER switches page 1 and back, HV boost still off',
       'key ZENER: page 1' in s and 'key ZENER: page 0' in s and bd.pin('F', 6) == 0, s)
 
-# --- mode switch
-bd.set_in('C', 14, 1)
-run_ms(400)
-s = uart_text()
-check('mode switch IR shown + logged', 'mode IR' in s, s)
-bd.set_in('C', 14, 0)
-run_ms(400)
+# --- mode switch: IR remote decoding
+ir_tests()
 uart_text()
 
 # --- ADC page

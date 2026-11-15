@@ -121,6 +121,7 @@ enum { PULL_NONE, PULL_UP, PULL_DOWN };
 #define PIN_KEY_TEST  GPIOC, 13   /* active low */
 #define PIN_KEY_ZENER GPIOF, 7    /* active low */
 #define PIN_MODE_IR   GPIOC, 14   /* 1 = slide switch on IR */
+#define PIN_IR        GPIOA, 11   /* IR receiver output, low while it sees the carrier */
 #define PIN_LCD_RST GPIOB, 4
 #define PIN_LCD_DC  GPIOB, 5      /* 0 = command */
 #define PIN_LCD_CS  GPIOB, 6      /* active low */

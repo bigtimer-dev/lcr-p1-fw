@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: EUPL-1.2
  * LCR-P1 open firmware, phase 2 step 2: ComponentTester probing (resistors so far).
  * Page 0: TEST runs a probing cycle and shows the result. Page 1 (ZENER switches pages): ADC readings.
+ * Mode switch on IR: decodes remote controls (ir.c).
  * Hold TEST 1 s = off, 3 min idle = off, low battery = off. The HV boost is never enabled.
  */
 #include "adc.h"
@@ -8,11 +9,12 @@
 #include "ct_hal.h"
 #include "measure.h"
 #include "adjust.h"
+#include "ir.h"
 #include "board.h"
 #include "lcd.h"
 #include "uart.h"
 
-#define VERSION   "0.8"
+#define VERSION   "0.9"
 #define IDLE_OFF_MS (3u * 60 * 1000)
 #define LOWBAT_MV 3300          /* as stock: switch off at or below this */
 
@@ -211,6 +213,60 @@ static void show_result(int found, uint32_t ms)
     lcd_text(4, 112, line, &font16, C_DIM, C_BLACK);
 }
 
+/* IR mode (slide switch): the screen shows the last decoded remote code */
+static void ir_screen(void)
+{
+    header();
+    lcd_text(4, 48, "IR remote", &font16, C_LABEL, C_BLACK);
+    lcd_text(4, 72, "waiting...", &font16, C_DIM, C_BLACK);
+}
+
+static void ir_receive(void)
+{
+    const uint16_t *b;
+    struct ir_result r;
+    char v[20];
+    int n = ir_capture(&b);
+    int ok = ir_decode(b, n, &r);
+    if (ok && !r.nbytes)                        /* NEC repeat: keep the code on screen */
+        return;
+    lcd_fill(0, 45, LCD_W, LCD_H - 45, C_BLACK);
+    if (!ok) {
+        lcd_text(4, 48, "IR: unknown", &font16, C_LABEL, C_BLACK);
+        fmt(v, sizeof v, "%d edges", n - 1);
+        lcd_text(4, 72, v, &font16, C_WHITE, C_BLACK);
+        lcd_text(4, 96, "timings: serial", &font16, C_DIM, C_BLACK);
+    } else if (r.nbytes == 8) {                 /* AC: whole state, two rows of 4 bytes */
+        lcd_text(4, 48, r.name, &font16, C_LABEL, C_BLACK);
+        for (int row = 0; row < 2; row++) {
+            const uint8_t *c = r.code + 4 * row;
+            fmt(v, sizeof v, "%02X %02X %02X %02X", c[0], c[1], c[2], c[3]);
+            lcd_text(4, 68 + 26 * row, v, &font24, C_ACCENT, C_BLACK);
+        }
+    } else {
+        lcd_text(4, 48, r.name, &font16, C_LABEL, C_BLACK);
+        fmt(v, sizeof v, "%02X%02X", r.code[0], r.code[1]);
+        lcd_text(4, 72, "Addr", &font16, C_LABEL, C_BLACK);
+        lcd_text(52, 68, v, &font24, C_ACCENT, C_BLACK);
+        fmt(v, sizeof v, "%02X%02X", r.code[2], r.code[3]);
+        lcd_text(4, 98, "Cmd", &font16, C_LABEL, C_BLACK);
+        lcd_text(52, 94, v, &font24, C_ACCENT, C_BLACK);
+    }
+    if (ok) {
+        uprintf("#I %s", r.name);
+        for (int k = 0; k < r.nbytes; k++)
+            uprintf(" %02X", r.code[k]);
+        uprintf("\r\n");
+    }
+    if (!ok || n > 100) {                       /* unknown or long (AC): the timings, mark space ... in us */
+        uprintf("#I raw %d:", n - 1);
+        for (int i = 1; i < n; i++)
+            uprintf(" %u", b[i]);
+        uprintf("\r\n");
+    }
+    beep(20);
+}
+
 int main(void)
 {
     board_init();
@@ -237,6 +293,26 @@ int main(void)
         int ev = key_poll();
         if (ev != KEY_NONE)
             idle = g_ms;
+        if (mode_ir()) {                        /* IR mode: only the receiver (and power-off) */
+            if (last_m != 1) {
+                uprintf("mode IR\r\n");
+                ir_screen();
+                last_m = 1;
+            }
+            if (ir_active()) {
+                ir_receive();
+                idle = g_ms;
+            }
+            if (ev == KEY_TEST_LONG)
+                off("key");
+            if (g_ms - idle > IDLE_OFF_MS)
+                off("idle");
+            continue;
+        }
+        if (last_m == 1) {                      /* back from IR mode */
+            page = 0, redraw = 1, shown = 0;
+            last_m = -1;                        /* logs "mode normal" below */
+        }
         if ((ev == KEY_TEST && key_zener_down()) || c_test == 2) {   /* ZENER held + TEST: self-adjust */
             c_test = 0;
             page = 0, header();

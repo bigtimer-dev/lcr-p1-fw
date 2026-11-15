@@ -178,6 +178,8 @@ void board_init(void)
     gpio_mode(PIN_KEY_TEST, MODE_IN);
     gpio_pull(PIN_MODE_IR, PULL_UP);
     gpio_mode(PIN_MODE_IR, MODE_IN);
+    gpio_pull(PIN_IR, PULL_UP);
+    gpio_mode(PIN_IR, MODE_IN);
     gpio_pull(PIN_KEY_ZENER, PULL_UP);
     gpio_mode(PIN_KEY_ZENER, MODE_IN);
 

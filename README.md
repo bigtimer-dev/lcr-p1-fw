@@ -13,7 +13,7 @@ then press **TEST** to enter update mode at any time, so stock firmware can alwa
 
 ## Status
 
-Version 0.8 runs on the meter and measures with ComponentTester's algorithms:
+Version 0.9 runs on the meter and measures with ComponentTester's algorithms:
 
 | | |
 |---|---|
@@ -23,9 +23,10 @@ Version 0.8 runs on the meter and measures with ComponentTester's algorithms:
 | BJTs | NPN / PNP, pinout, hFE, Iceo |
 | FETs | pinout, gate threshold (Vth) |
 | inductors | from about 20 µH, when the coil is below 2 kΩ (shown with its resistance) |
+| IR remotes | mode switch on IR: NEC, Samsung32, Sony 12/15/20, RC5, Gree/Kelvinator AC |
 | self-adjustment | R0 (probe resistance), RiL / RiH (MCU pin resistance), C0 (probe capacitance) |
 
-Not done yet: Zener test (the HV boost is never switched on), IR decoding.
+Not done yet: Zener test (the HV boost is never switched on).
 
 Typical test times: empty socket 1.1 s, resistor 1.2 s, 330 µF electrolytic 5.6 s (large caps need time to
 charge and discharge).
@@ -57,6 +58,15 @@ delay, and the threshold scaled by 0.83 in the high-current mode, where the pin 
 its resistance at low current predicts. Checked on the meter: 50 µH reads 47.2 µH, 36 µH reads 34.4 µH,
 2.2 mH reads 2.30 mH; plain resistors (0 Ω, 10 Ω, 2 kΩ) show no inductance. Coils above 40 Ω (the
 low-current mode) are not checked on the meter yet.
+
+### IR remotes
+
+With the slide switch on IR the meter only listens to the receiver (PA11), polled against the 1 MHz
+timer: a capture ends after 50 ms without a mark, so air-conditioner frames with 20/40 ms gaps stay whole.
+The screen shows the protocol with address and command (AC: all 8 bytes); the serial port gets
+`#I <protocol> <bytes>`, and for unknown or long frames `#I raw <n>: <mark> <space> ...` in µs.
+Checked on the meter with a Gree-type AC remote (temperature steps and off, checksums valid); the other
+protocols are checked in the emulator with generated frames.
 
 ### Serial port
 
