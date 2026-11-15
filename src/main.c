@@ -335,13 +335,15 @@ int main(void)
                 c_test = 2;                     /* self-adjustment */
             else if (k == 'N')
                 nv_print("current");
-            else if (k == 'E' && arg <= 15) {
+#ifdef CT_DEBUG
+            else if (k == 'E' && arg <= 15) {   /* ADC sampling instant scan (sets the ESR timing) */
                 relay(1);                       /* probes free */
                 delay_ms(30);
                 adc_timing_scan(arg);
                 relay(0);
                 uprintf("#E end\r\n");
             }
+#endif
             else if (k == 'D')
                 probe_diag();
             else if (k == 'G')
