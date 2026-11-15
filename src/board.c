@@ -188,6 +188,7 @@ void board_init(void)
 
 /* keys: sampled from the main loop, 20 ms debounce; TEST held 1 s = TEST_LONG */
 static uint8_t st_test, st_zener, long_sent, armed, z_chord;
+static uint32_t t_zdown;
 static uint32_t t_test, t_zener, t_down;
 
 int key_test_down(void) { return !gpio_get(PIN_KEY_TEST); }
@@ -219,9 +220,9 @@ int key_poll(void)
     if (z != st_zener && now - t_zener >= 20) {
         st_zener = z, t_zener = now;
         if (z)
-            z_chord = 0;
-        else if (!z_chord && ev == KEY_NONE)
-            ev = KEY_ZENER;                     /* on release, so a chord never starts the HV boost */
+            z_chord = 0, t_zdown = now;
+        else if (!z_chord && ev == KEY_NONE)    /* on release, so a chord (ZENER + TEST) wins at any hold time */
+            ev = now - t_zdown >= 2000 ? KEY_ZENER_LONG : KEY_ZENER;   /* held 2 s alone: settings */
     }
     return ev;
 }

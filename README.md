@@ -13,7 +13,7 @@ then press **TEST** to enter update mode at any time, so stock firmware can alwa
 
 ## Status
 
-Version 1.1 runs on the meter and measures with ComponentTester's algorithms:
+Version 1.2 runs on the meter and measures with ComponentTester's algorithms:
 
 | | |
 |---|---|
@@ -26,6 +26,7 @@ Version 1.1 runs on the meter and measures with ComponentTester's algorithms:
 | IR remotes | mode switch on IR: NEC, Samsung32, Sony 12/15/20, RC5, Gree/Kelvinator AC |
 | Zener diodes | ZENER key: K-A-A socket, 0.1 to 33 V (boost open voltage ~37 V), ~5 mA |
 | self-adjustment | R0 (probe resistance), RiL / RiH (MCU pin resistance), C0 (probe capacitance) |
+| battery / power | battery icon and charge %, auto power-off 1 / 3 / 10 / 30 min (ZENER held 2 s) |
 
 All functions of the stock firmware are covered. Results with one part (resistor, coil, capacitor, diode,
 BJT, MOSFET, JFET) are drawn as a symbol with the probe numbers at its terminals, values below.
@@ -41,7 +42,14 @@ charge and discharge).
   "short" below 0.1 V). ZENER goes back. On the meter: 5.1 V Zener 5.005 V, 12 V Zener 11.98 V.
 - **ZENER held + TEST**: self-adjustment. Short all three probes and press TEST, then remove the short and
   press TEST. The values are stored in flash and survive firmware updates. ZENER cancels.
-- **TEST held 1 s**: power off. The meter also switches off after 3 min without use and at 3.3 V battery.
+- **ZENER held 2 s, then released** (no TEST in between): settings, auto power-off after 1, 3 (default),
+  10 or 30 min. ZENER changes, TEST saves (stored with the adjustment values), 10 s untouched leaves
+  without saving.
+- **TEST held 1 s**: power off. The meter also switches off after the auto power-off time without use and at
+  3.3 V battery.
+- **Battery**: icon at the top right of the screen (red below 15 %), voltage and charge on the start screen
+  (LiPo curve, so it reads a few % high while charging). There is no charging indication: the board has no
+  USB or charger status line (the CH340 runs from the 3.3 V rail).
 - **ZENER held, then TEST** while off: FNIRSI update mode (bootloader, untouched).
 
 ### ESR

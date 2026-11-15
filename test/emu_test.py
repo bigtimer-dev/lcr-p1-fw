@@ -806,8 +806,12 @@ s = uart_text()
 check('ADC readout over serial: battery 4.10 V, raw codes per channel',
       '#A ' in s and 'bat=4100mV' in s and 'BAT=1700' in s and 'REF=2035' in s, s[-200:])
 check('ADC: sample time code 14 on ch8 (settles from 470k), rank 1 = selected channel', (bd.reg.get(0x40020810, 0) & 15) == 14)
+check('first battery reading after power-on skipped (no icon, no % yet)', '#B' not in s and bd.lcd.count(0x8C33, 4, 18) == 0, s[-200:])
+run_ms(1200)
+s += uart_text()
 bd.lcd.png(os.path.join(OUTDIR, 'screen_bat.png'))
 check('battery shown on page 0', bd.lcd.count(0x8C33, 112, 128) > 30)
+check('battery icon in the header (grey at 92 %), logged', bd.lcd.count(0x8C33, 4, 18) > 30 and '#B 92%' in s, s[-300:])
 
 if LOWBAT:                                              # second pass: battery drops to 3.13 V
     bd.adc[8] = 1300
@@ -1097,6 +1101,7 @@ def nv_records():
 
 nv0 = nv_ram()
 recs0 = nv_records()
+n_extra = 1                                             # + the auto-off setting saved by the settings test
 check('after the cap tests: a record exactly when CompOffset moved by >= 3 mV',
       all(abs((b[8] ^ 0x80) - (a[8] ^ 0x80)) >= 3 for a, b in zip([bytes(10)] + recs0, recs0)) and   # int8 CompOffset (not recs0 or recs0[-1][:10] == bytes(uc.mem_read(NV_ADDR, 10))),
       (recs0, nv0))
@@ -1219,6 +1224,13 @@ check('ZENER+TEST chord: self-adjust, HV stays off', 'Short all probes' in out a
 zener_press(); run_ms(1500)
 out = uart_text()
 check('ZENER cancels the self-adjust, no Zener mode', 'zener on' not in out and bd.pin('F', 6) == 0, out[-200:])
+bd.set_in('F', 7, 0); run_ms(2500)                       # slow chord: ZENER held 2.5 s before TEST
+bd.set_in('C', 13, 0); run_ms(300); bd.set_in('C', 13, 1); run_ms(300)
+bd.set_in('F', 7, 1)
+out = wait_for('Short all probes', '')
+check('slow chord (ZENER held 2.5 s, then TEST): still self-adjust, no settings', 'Short all probes' in out
+      and 'settings' not in out, out[-200:])
+zener_press(); run_ms(1500); uart_text()
 
 # --- mode switch: IR remote decoding
 ir_tests()
@@ -1262,6 +1274,23 @@ run_ms(300)
 s = ''.join(l for l in uart_text().splitlines(True) if l.startswith('#? '))
 check('serial "?" status reply', s.startswith('#? ') and 'relay=0' in s, s)
 
+# --- settings: hold ZENER 2 s -> auto power-off time; ZENER changes, TEST saves (in the record's pad byte)
+uart_text()
+bd.set_in('F', 7, 0); run_ms(2600); bd.set_in('F', 7, 1); run_ms(800)
+s = uart_text()
+check('ZENER held 2 s: settings screen, no Zener mode', 'settings' in s and 'zener' not in s
+      and bd.pin('F', 6) == 0, s[-200:])
+bd.set_in('F', 7, 0); run_ms(300); bd.set_in('F', 7, 1); run_ms(800)     # 3 -> 10 min
+bd.lcd.png(os.path.join(OUTDIR, 'screen_settings.png'))
+bd.set_in('C', 13, 0); run_ms(300); bd.set_in('C', 13, 1); run_ms(800)
+s = uart_text()
+recs = nv_records()
+pad = bytes(uc.mem_read(NV_PAGE + 16 * (len(recs) - 1) + 15, 1))[0] if recs else None
+check('auto-off 10 min saved in the newest record (pad byte = 10)', 'auto-off 10 min saved' in s and pad == 10, (s[-200:], pad))
+bd.set_in('F', 7, 0); run_ms(2600); bd.set_in('F', 7, 1); run_ms(800)
+run_ms(11000)
+check('settings untouched for 10 s: cancelled', 'settings: no change' in uart_text())
+
 # --- long TEST: power off
 bd.set_in('C', 13, 0)
 run_ms(2500)
@@ -1298,7 +1327,7 @@ for i in range(40):
     uc.mem_write(NV_ADDR, bytes(b))
     oks.append(call('nv_save'))
 recs = nv_records()
-n_wrap = (len(recs0) + 1 + 39) - 32                     # records before + adjust + 39 changed saves, 32 slots
+n_wrap = (len(recs0) + n_extra + 1 + 39) - 32                     # records before + adjust + 39 changed saves, 32 slots
 check(f'40 saves (#0 = unchanged: no write): all ok, one erase of the NV page, {n_wrap} records after the wrap, no flash errors',
       all(oks) and flash['erases'] == [NV_PAGE] and len(recs) == n_wrap and not flash['errors']
       and bytes(uc.mem_read(0x0800FFD0, 0x30)) == STOCK_CAL, (oks, flash, len(recs)))

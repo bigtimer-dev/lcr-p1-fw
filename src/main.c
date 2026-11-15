@@ -3,7 +3,7 @@
  * Page 0: TEST runs a probing cycle and shows the result. Page 1 (serial #A switches pages): ADC readings.
  * ZENER: Zener mode (K-A-A socket), TEST measures with the HV boost on.
  * Mode switch on IR: decodes remote controls (ir.c).
- * Hold TEST 1 s = off, 3 min idle = off, low battery = off. The HV boost is on only while a Zener reads.
+ * Hold TEST 1 s = off, idle = off after 1/3/10/30 min (hold ZENER 2 s), low battery = off. The HV boost is on only while a Zener reads.
  */
 #include "adc.h"
 #include "hw.h"
@@ -16,8 +16,8 @@
 #include "lcd.h"
 #include "uart.h"
 
-#define VERSION   "1.1"
-#define IDLE_OFF_MS (3u * 60 * 1000)
+#define VERSION   "1.2"
+#define IDLE_OFF_MS (nv_off_min() * 60000u)   /* 1, 3 (default), 10 or 30 min: hold ZENER 2 s */
 #define LOWBAT_MV 3300          /* as stock: switch off at or below this */
 
 static void row(int y, const char *label, const char *value, uint16_t c)
@@ -27,6 +27,44 @@ static void row(int y, const char *label, const char *value, uint16_t c)
     lcd_fill(x, y, LCD_W - x, 16, C_BLACK);
 }
 
+/* battery: LiPo charge from the voltage (resting curve; reads higher while charging) */
+static const uint16_t bat_curve[][2] = {
+    {3300, 0}, {3500, 5}, {3600, 10}, {3700, 25}, {3750, 40}, {3800, 50}, {3850, 60}, {3900, 68},
+    {4000, 80}, {4100, 92}, {4200, 100},
+};
+static int bat_pct = -1;                        /* shown value, -1 = none yet */
+
+static int bat_percent(uint32_t mv)
+{
+    if (mv <= bat_curve[0][0])
+        return 0;
+    for (unsigned i = 1; i < sizeof bat_curve / sizeof bat_curve[0]; i++)
+        if (mv < bat_curve[i][0])
+            return bat_curve[i - 1][1] + (int)(mv - bat_curve[i - 1][0]) * (bat_curve[i][1] - bat_curve[i - 1][1])
+                                         / (bat_curve[i][0] - bat_curve[i - 1][0]);
+    return 100;
+}
+
+/* icon at the top right of the header: outline and level bar, red below 15 %. (No charging sign: the board
+   has no USB/charge status line; the CH340 runs from the 3.3 V rail, so its RX line stays high.) */
+static void bat_icon(void)
+{
+    const int x = 106, y = 6, w = 18, h = 10;
+    if (bat_pct < 0)
+        return;
+    uint16_t c = bat_pct < 15 ? C_RED : C_LABEL;
+    lcd_fill(x, y, w, 1, c);
+    lcd_fill(x, y + h - 1, w, 1, c);
+    lcd_fill(x, y, 1, h, c);
+    lcd_fill(x + w - 1, y, 1, h, c);
+    lcd_fill(x + w, y + 3, 2, h - 6, c);
+    int f = (w - 4) * bat_pct / 100;
+    if (f < 1)
+        f = 1;
+    lcd_fill(x + 2, y + 2, f, h - 4, c);
+    lcd_fill(x + 2 + f, y + 2, w - 4 - f, h - 4, C_BLACK);
+}
+
 static void header(void)
 {
     lcd_fill(0, 0, LCD_W, LCD_H, C_BLACK);
@@ -34,6 +72,7 @@ static void header(void)
     lcd_text((LCD_W - lcd_text_width("open fw " VERSION, &font16)) / 2, 26, "open fw " VERSION, &font16,
              C_LABEL, C_BLACK);
     lcd_fill(4, 44, LCD_W - 8, 1, C_DIM);
+    bat_icon();
 }
 
 static const struct { const char *name; uint8_t ch; uint8_t mul; } adc_rows[] = {
@@ -269,6 +308,46 @@ static int adj_key(void)                            /* TEST continues, ZENER can
 
 static const struct adjust_ui adj_ui = {adj_say, adj_key};
 
+/* settings (hold ZENER 2 s): auto power-off time. ZENER changes, TEST saves, 10 s untouched = cancel */
+static void settings(void)
+{
+    static const uint8_t opts[] = {1, 3, 10, 30};
+    unsigned k = 0, cur = nv_off_min();
+    while (opts[k] != cur)
+        k++;
+    char b[16];
+    uprintf("settings\r\n");
+    header();
+    lcd_text(4, 48, "Auto power-off", &font16, C_LABEL, C_BLACK);
+    lcd_text(4, 96, "ZENER: change", &font16, C_LABEL, C_BLACK);
+    lcd_text(4, 112, "TEST: save", &font16, C_LABEL, C_BLACK);
+    uint32_t t0 = g_ms;
+    for (int draw = 1;; ) {
+        wdt_feed();
+        beep_poll();
+        if (draw) {
+            fmt(b, sizeof b, "%u min", opts[k]);
+            lcd_fill(0, 66, LCD_W, 26, C_BLACK);
+            lcd_text((LCD_W - lcd_text_width(b, &font24)) / 2, 68, b, &font24, C_ACCENT, C_BLACK);
+            draw = 0;
+        }
+        int ev = key_poll();
+        if (ev == KEY_ZENER)
+            k = (k + 1) % sizeof opts, draw = 1, t0 = g_ms;
+        else if (ev == KEY_TEST) {
+            int ok = nv_set_off_min(opts[k]);
+            uprintf("auto-off %u min %s\r\n", opts[k], ok ? "saved" : "SAVE FAILED");
+            beep(40);
+            break;
+        } else if (ev == KEY_TEST_LONG)
+            off("key");
+        if (g_ms - t0 > 10000) {
+            uprintf("settings: no change\r\n");
+            break;
+        }
+    }
+}
+
 static void show_result(int found, uint32_t ms)
 {
     char v[16], line[24];
@@ -485,6 +564,11 @@ int main(void)
             redraw = 0, last_t = last_z = last_r = last_m = -2;     /* keep the result on screen */
             shown = 1;
             beep(found ? 60 : 20);
+        } else if (ev == KEY_ZENER_LONG) {
+            settings();
+            idle = g_ms;
+            page = 0, redraw = 1, shown = 0;
+            continue;
         } else if (ev == KEY_ZENER) {
             beep(20);
             idle = zener_mode();
@@ -531,8 +615,19 @@ int main(void)
             for (unsigned i = 0; i < NROWS; i++)
                 uprintf(" %s=%u", adc_rows[i].name, raw[i]);
             uprintf("\r\n");
-            if (page == 0 && !shown) {
-                fmt(buf, sizeof buf, "%u.%02uV %us", bat / 1000, bat % 1000 / 10, s);
+            static uint8_t bat_skip = 1;        /* first reading after power-on is low (divider settling) */
+            int pct = bat_percent(bat);
+            if (bat_skip)
+                bat_skip = 0;
+            else if (bat_pct < 0 || pct > bat_pct + 1 || pct < bat_pct - 1 || (pct == 0) != (bat_pct == 0)
+                || (pct < 15) != (bat_pct < 15)) {                  /* hysteresis: no 89/90 % flicker */
+                bat_pct = pct;
+                uprintf("#B %d%%\r\n", pct);
+                if (page == 0 && !no_header)
+                    bat_icon();
+            }
+            if (page == 0 && !shown && bat_pct >= 0) {
+                fmt(buf, sizeof buf, "%u.%02uV %d%%", bat / 1000, bat % 1000 / 10, bat_pct);
                 row(112, "BAT", buf, C_LABEL);
             } else if (page == 1) {
                 for (unsigned i = 0; i < NROWS; i++) {

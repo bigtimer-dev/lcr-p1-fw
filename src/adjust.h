@@ -4,7 +4,9 @@
 
 int nv_load(void);                  /* stored adjustment values -> NV; 0 = none stored (defaults stay) */
 int nv_save(void);                  /* NV -> flash (no write when unchanged); 0 = flash error */
-int nv_autosave(void);              /* after a test: save when CompOffset moved >= 3 mV or anything else changed */
+int nv_autosave(void);
+unsigned nv_off_min(void);          /* auto power-off time (min), stored with the adjustment values */
+int nv_set_off_min(unsigned min);   /* store it; 0 = flash error */              /* after a test: save when CompOffset moved >= 3 mV or anything else changed */
 void nv_print(const char *tag);     /* "#N ..." over serial */
 
 struct adjust_ui {

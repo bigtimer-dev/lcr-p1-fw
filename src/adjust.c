@@ -109,21 +109,38 @@ static int fl_word(uint32_t addr, uint32_t w)
     return ok && *(volatile uint32_t *)addr == w;
 }
 
+/* settings in the byte after CheckSum (struct padding, 0xFF in records of v1.0/v1.1): auto-off minutes,
+   0xFF = default. Not part of the checksum, compared on save like the values. */
+#define PAD (((uint8_t *)&NV)[sizeof NV - 1])
+static uint8_t off_min = 0xFF;
+
 int nv_load(void)
 {
     const struct rec *r = last_valid();
     if (!r)
         return 0;
     memcpy(&NV, &r->nv, sizeof NV);
+    off_min = PAD;
     return 1;
+}
+
+unsigned nv_off_min(void)
+{
+    return off_min == 1 || off_min == 3 || off_min == 10 || off_min == 30 ? off_min : 3;
+}
+
+int nv_set_off_min(unsigned min)
+{
+    off_min = (uint8_t)min;
+    return nv_save();
 }
 
 int nv_save(void)
 {
     NV.CheckSum = nv_sum(&NV);
-    ((uint8_t *)&NV)[sizeof NV - 1] = 0xFF;             /* pad byte: defined, as erased flash */
+    PAD = off_min;                                      /* pad byte: the settings (0xFF = defaults) */
     const struct rec *r = last_valid();
-    if (r && !memcmp(&r->nv, &NV, NV_LEN))
+    if (r && !memcmp(&r->nv, &NV, NV_LEN) && ((const uint8_t *)&r->nv)[sizeof NV - 1] == off_min)
         return 1;                                       /* unchanged */
     unsigned i = 0;
     while (i < REC_SLOTS && !slot_empty(i))
@@ -164,8 +181,8 @@ int nv_autosave(void)
 
 void nv_print(const char *tag)
 {
-    uprintf("#N %s RiL=%u RiH=%u R0=%u C0=%u CompOffset=%d\r\n", tag, NV.RiL, NV.RiH, NV.RZero, NV.CapZero,
-            NV.CompOffset);
+    uprintf("#N %s RiL=%u RiH=%u R0=%u C0=%u CompOffset=%d off=%umin\r\n", tag, NV.RiL, NV.RiH, NV.RZero, NV.CapZero,
+            NV.CompOffset, nv_off_min());
 }
 
 

@@ -24,7 +24,7 @@ void beep(unsigned ms);                 /* non-blocking; beep_poll() ends it */
 void beep_poll(void);
 
 /* keys: debounced; events for the main loop */
-enum { KEY_NONE, KEY_TEST, KEY_TEST_LONG, KEY_ZENER };
+enum { KEY_NONE, KEY_TEST, KEY_TEST_LONG, KEY_ZENER, KEY_ZENER_LONG };
 int key_poll(void);
 int key_test_down(void);
 int key_zener_down(void);
