@@ -32,18 +32,28 @@ static void select(unsigned ch, unsigned st)
     ADC_RSEQ3 = (ADC_RSEQ3 & ~31u) | ch;
 }
 
+static unsigned last_ch = ~0u;
+
+static uint32_t convert(void)
+{
+    ADC_CR2 |= 0x500000;                        /* start */
+    for (unsigned k = 0; !(ADC_STS & 2); k++)
+        if (k > 100000)
+            return 0;
+    ADC_STS &= ~2u;
+    return ADC_DAT & 0xFFF;
+}
+
 uint32_t adc_raw(unsigned ch, unsigned n)
 {
-    uint32_t sum = 0;
     select(ch, 12);                             /* sample time code as stock */
-    while (n--) {
-        ADC_CR2 |= 0x500000;                    /* start */
-        for (unsigned k = 0; !(ADC_STS & 2); k++)
-            if (k > 100000)
-                return sum;
-        ADC_STS &= ~2u;
-        sum += ADC_DAT & 0xFFF;
+    if (ch != last_ch) {                        /* the first conversion after a channel switch still */
+        last_ch = ch;                           /* returns the previous channel: discard it */
+        (void)convert();
     }
+    uint32_t sum = 0;
+    while (n--)
+        sum += convert();
     return sum;
 }
 

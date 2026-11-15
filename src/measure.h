@@ -5,7 +5,8 @@
 
 void measure_init(void);            /* after board/ADC init: load adjustment defaults, set Cfg */
 int measure_run(void);              /* one probing cycle (ComponentTester sequence); returns Check.Found */
-uint16_t measure_vcc(void);         /* Vcc (mV) from the last cycle (2.5 V reference) */
+uint16_t measure_vcc(void);         /* probe drive level (mV) measured in the last cycle */
+uint16_t measure_adc_fs(void);      /* ADC full scale (mV) from the 2.5 V reference */
 int measure_ref_ok(void);           /* 2.5 V reference was in range */
 /* result access for the UI */
 int measure_resistors(void);

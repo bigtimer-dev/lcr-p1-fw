@@ -81,11 +81,44 @@ static void probe_diag(void)
     uprintf("#D end\r\n");
 }
 
+/* serial 'X': why do the probe pins drive high only to ~87 % of the ADC full scale? Drive probe 1
+   (PA1) high with probes 2/3 floating and read it; then apply, one at a time, the port A values the
+   stock firmware writes (output type, +0x08, drive strength +0x2C) and read again. */
+static void drive_experiment(void)
+{
+    ADC_DDR_set(0);
+    MilliSleep(30);
+    R_DDR_set(0);
+    ADC_PORT_set(1);
+    ADC_DDR_set(1);                             /* PA1 output high, everything else floating */
+    MilliSleep(5);
+    uint32_t o4 = R32(GPIOA + 0x04), o8 = R32(GPIOA + 0x08), o2c = R32(GPIOA + 0x2C);
+    uprintf("#X regs A: otype=%x r08=%x ds=%x  B: otype=%x r08=%x ds=%x\r\n", o4, o8, o2c,
+            R32(GPIOB + 0x04), R32(GPIOB + 0x08), R32(GPIOB + 0x2C));
+    uprintf("#X base      P1=%u REF=%u BAT=%u\r\n", adc_raw(1, 32) / 32, adc_raw(0, 32) / 32, adc_raw(8, 32) / 32);
+    R32(GPIOA + 0x04) = 0;
+    MilliSleep(2);
+    uprintf("#X otype=0   P1=%u\r\n", adc_raw(1, 32) / 32);
+    R32(GPIOA + 0x08) = 0x0A00;
+    MilliSleep(2);
+    uprintf("#X r08=a00   P1=%u\r\n", adc_raw(1, 32) / 32);
+    R32(GPIOA + 0x2C) = 0xF4FF;
+    MilliSleep(2);
+    uprintf("#X ds=f4ff   P1=%u\r\n", adc_raw(1, 32) / 32);
+    R32(GPIOA + 0x04) = o4;
+    R32(GPIOA + 0x08) = o8;
+    R32(GPIOA + 0x2C) = o2c;
+    ADC_DDR_set(0);
+    ADC_PORT_set(0);
+    ADC_DDR_set(1 << 4);
+    uprintf("#X end\r\n");
+}
+
 static void show_result(int found, uint32_t ms)
 {
     char v[16], line[24];
     lcd_fill(0, 45, LCD_W, LCD_H - 45, C_BLACK);
-    uprintf("#R found=%d vcc=%u ref=%d ms=%u\r\n", found, measure_vcc(), measure_ref_ok(), ms);
+    uprintf("#R found=%d vcc=%u fs=%u ref=%d ms=%u\r\n", found, measure_vcc(), measure_adc_fs(), measure_ref_ok(), ms);
     int n = measure_resistors();
     if (n) {
         lcd_text(4, 48, n > 1 ? "Resistors" : "Resistor", &font16, C_LABEL, C_BLACK);
@@ -214,6 +247,8 @@ int main(void)
             c_test = 1;                         /* serial: run a test */
         if (c == 'D')
             probe_diag();
+        if (c == 'X')
+            drive_experiment();
         if (c == '?')
             uprintf("#? t=%u test=%d zener=%d ir=%d relay=%d adc=%d\r\n", g_ms, t, z, m, relay_on, adc_ok);
     }

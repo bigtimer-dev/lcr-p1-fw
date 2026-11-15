@@ -56,7 +56,9 @@ class Board:
         self.adc = {8: 1700, 0: 2035, 2: 0}     # raw codes; ch8 1700 = 4.10 V battery, ch0 2.5 V ref at 5.02 V
         self.us = 0
         self.dut = {}                           # {(probe_a, probe_b): ohms}, probes 0..2
-        self.vcc = 5.020
+        self.vcc = 5.020                        # ADC full scale (V)
+        self.vdrive = 4.39                      # level a probe pin drives high to (measured on the meter)
+        self.adc_last = None                    # (channel, value) of the previous conversion
 
     def pin(self, port, n):
         return self.out[port] >> n & 1
@@ -108,7 +110,7 @@ class Board:
                 if on:
                     g = 1 / (r + (22 if lvl else 20))   # MCU pin resistance high / low
                     G[n][n] += g
-                    I[n] += g * self.vcc * lvl
+                    I[n] += g * self.vdrive * lvl
         links = dict(self.dut)
         if not self.pin('B', 3):                # relay off: probes shorted
             for pair in ((0, 1), (0, 2), (1, 2)):
@@ -149,6 +151,10 @@ class Board:
         elif a == 0x40020850:
             ch = self.reg.get(0x40020838, 0) & 31
             v = self.probe_adc(ch) if ch in (1, 3, 6) else self.adc.get(ch, 0)
+            if self.adc_last and self.adc_last[0] != ch:    # hardware: first conversion after a
+                v, self.adc_last = self.adc_last[1], (ch, v)  # channel switch is the old channel's
+            else:
+                self.adc_last = (ch, v)
         elif a == 0x40000824:                           # TIM3 counter: 1 us per read, never behind the ms tick
             self.us = max(self.us + 1, self.ms * 1000)
             v = self.us & 0xFFFF
@@ -370,8 +376,8 @@ def resistors(out):
             if l.startswith('#R R ')]
 
 out, relay = measure({})
-check('no part: "no component", Vcc from the 2.5 V reference', 'found=0' in out and 'ref=1' in out
-      and 'vcc=502' in out, out[-160:])
+check('no part: "no component", ADC full scale from 2.5 V ref, drive level measured', 'found=0' in out
+      and 'ref=1' in out and 'fs=502' in out and 'vcc=43' in out, out[-160:])
 check('relay frees the probes for the test and shorts them again after', relay[:1] == ['PB3=1'] and relay[-1:] == ['PB3=0']
       and bd.pin('B', 3) == 0, relay)
 for dut, pins, ohms, tol in (({(0, 1): 1000}, '1-2', 1000, 0.01), ({(1, 2): 360}, '2-3', 360, 0.01),
@@ -393,7 +399,11 @@ uart_text(); bd.uart_rx += b'D'; run_ms(400)
 s = uart_text()
 d = [l for l in s.splitlines() if l.startswith('#D P1 Rl')]
 v = int(d[0].split()[3]) if d else -1
-check('diag: P1 via Rl with 1k to P2 (low) reads ~59 % of Vcc', 0.55 < v / 4096 < 0.63 and '#D end' in s, d)
+check('diag: P1 via Rl with 1k to P2 (low) reads ~52 % of full scale (4.39 V drive)', 0.48 < v / 4096 < 0.56
+      and '#D end' in s, d)
+uart_text(); bd.uart_rx += b'X'; run_ms(300)
+s = uart_text()
+check('drive experiment runs and restores', '#X end' in s and bd.pin('B', 3) == 0, s[-200:])
 check('diag: probes shorted again afterwards', bd.pin('B', 3) == 0)
 bd.dut = {}
 

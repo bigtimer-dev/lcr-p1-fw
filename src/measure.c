@@ -21,19 +21,45 @@ void measure_init(void)
     ADC_DDR_set(1 << TP_REF);                   /* relay off: probes shorted (safe) */
 }
 
-/* main.c CheckVoltageRefs(), HW_REF25 part: Vcc from the 2.5 V reference */
+extern uint16_t ct_adc_fs_mv;
+
+/* main.c CheckVoltageRefs(), HW_REF25 part: ADC full scale from the 2.5 V reference */
 static void check_refs(void)
 {
-    Cfg.Vcc = UREF_VCC;
+    ct_adc_fs_mv = UREF_VCC;
     Cfg.Samples = 200;
     uint16_t u = ReadU(TP_REF);
     if (u > 2250 && u < 2750) {
-        Cfg.Vcc = (uint16_t)((uint32_t)Cfg.Vcc * UREF_25 / u);
+        ct_adc_fs_mv = (uint16_t)((uint32_t)ct_adc_fs_mv * UREF_25 / u);
         Cfg.OP_Mode |= OP_EXT_REF;
     } else {
         Cfg.OP_Mode &= ~OP_EXT_REF;
     }
+    Cfg.Vcc = ct_adc_fs_mv;
     Cfg.Samples = ADC_SAMPLES;
+}
+
+/* LCR-P1: the probe pins drive high to about 4.4 V, not to the ADC reference. Measure the drive level:
+   pull each probe up via Rl with the other two floating (no DC path through any part: no current,
+   so the probe sits at the drive level) and keep the highest reading as Cfg.Vcc. */
+static void check_drive(void)
+{
+    static const uint8_t rl[3] = {1 << R_RL_1, 1 << R_RL_2, 1 << R_RL_3};
+    uint16_t max = 0;
+    ADC_DDR_set(0);
+    ADC_PORT_set(0);
+    for (uint8_t p = 0; p < 3; p++) {
+        R_PORT_set(rl[p]);
+        R_DDR_set(rl[p]);
+        wait5ms();
+        uint16_t u = ReadU(p);                  /* TP1..TP3 are channels 0..2 */
+        if (u > max)
+            max = u;
+        R_DDR_set(0);
+        R_PORT_set(0);
+    }
+    if (max > 3000 && max <= ct_adc_fs_mv)      /* plausible: use it */
+        Cfg.Vcc = max;
 }
 
 int measure_run(void)
@@ -55,6 +81,8 @@ int measure_run(void)
     check_refs();
 
     DischargeProbes();
+    if (Check.Found != COMP_ERROR)
+        check_drive();
     if (Check.Found != COMP_ERROR) {
         CheckProbes(PROBE_1, PROBE_2, PROBE_3);
         CheckProbes(PROBE_2, PROBE_1, PROBE_3);
@@ -72,6 +100,7 @@ int measure_run(void)
 }
 
 uint16_t measure_vcc(void) { return Cfg.Vcc; }
+uint16_t measure_adc_fs(void) { return ct_adc_fs_mv; }
 int measure_ref_ok(void) { return (Cfg.OP_Mode & OP_EXT_REF) != 0; }
 int measure_resistors(void) { return Check.Found == COMP_RESISTOR ? Check.Resistors : 0; }
 
