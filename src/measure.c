@@ -3,6 +3,7 @@
  * without its display code. Capacitor and semiconductor checks join as their modules are ported.
  */
 #include "measure.h"
+#include "sym.h"
 #include "config.h"
 #include "common.h"
 #include "variables.h"
@@ -222,6 +223,11 @@ static void pinout(struct mres *r)                    /* "1B 2C 3E" */
     fmt(add(r), 17, "1%c 2%c 3%c", d[0], d[1], d[2]);
 }
 
+static void set_sym(struct mres *r, uint8_t sym, uint8_t a, uint8_t b, uint8_t c, uint8_t first)
+{
+    r->sym = sym, r->pins[0] = a + 1, r->pins[1] = b + 1, r->pins[2] = c + 1, r->first = first;
+}
+
 static void value_line(struct mres *r, const char *label, uint32_t value, int8_t scale, const char *unit)
 {
     char v[12];
@@ -249,6 +255,7 @@ static void describe_diodes(struct mres *r)
     }
     if (Check.Diodes == 1) {
         Diode_Type *d = &Diodes[0];
+        set_sym(r, SYM_DIODE, d->A, d->C, 0, 0);
         if (d->V_f2 < 250) {                    /* Ge / Schottky: low-current V_f too */
             char v[10];
             mv(v, sizeof v, d->V_f2);
@@ -266,6 +273,7 @@ static void describe_bjt(struct mres *r)
     uint8_t npn = Check.Type & TYPE_NPN;
     fmt(r->title, sizeof r->title, "%s%s", npn ? "NPN" : "PNP", Check.Type & TYPE_PARASITIC ? " parasitic" : "");
     pinout(r);
+    set_sym(r, npn ? SYM_NPN : SYM_PNP, Semi.A, Semi.B, Semi.C, 1);
     fmt(add(r), 17, "hFE %u", (unsigned)Semi.F_1);
     Diode_Type *d = npn ? SearchDiode(Semi.A, Semi.C) : SearchDiode(Semi.C, Semi.A);
     if (d) {                                    /* V_BE interpolated for the hFE class (upstream) */
@@ -293,6 +301,13 @@ static void describe_fet(struct mres *r)
         Check.Found == COMP_IGBT ? "IGBT" : t & TYPE_MOSFET ? "MOSFET" : "JFET",
         t & TYPE_ENHANCEMENT ? "enh" : t & TYPE_DEPLETION ? "dep" : "");
     pinout(r);
+    uint8_t n = t & TYPE_N_CHANNEL ? 1 : 0, sym = 0;
+    if (Check.Found == COMP_FET && t & TYPE_MOSFET)
+        sym = t & TYPE_ENHANCEMENT ? (n ? SYM_NMOS : SYM_PMOS) : (n ? SYM_NMOS_DEP : SYM_PMOS_DEP);
+    else if (Check.Found == COMP_FET && t & TYPE_JFET)
+        sym = n ? SYM_NJFET : SYM_PJFET;
+    if (sym)
+        set_sym(r, sym, Semi.A, Semi.B, Semi.C, 1);
     if (t & TYPE_ENHANCEMENT) {
         if (Semi.U_2 != 0) {
             char v[10];
@@ -319,6 +334,7 @@ static void describe_cap(struct mres *r)              /* upstream Show_Capacitor
         if (CmpValue(Caps[i].Value, Caps[i].Scale, m->Value, m->Scale) == 1)
             m = &Caps[i];
     fmt(r->title, sizeof r->title, "Capacitor %u-%u", m->A + 1, m->B + 1);
+    set_sym(r, SYM_CAP, m->A, m->B, 0, 0);
     value_line(r, "C", m->Value, m->Scale, "F");
     uint16_t esr = MeasureESR(m);                     /* upstream: from 10 nF */
     if (esr < UINT16_MAX)
@@ -331,6 +347,7 @@ static void describe(struct mres *r)
 {
     r->n = 0;
     r->title[0] = 0;
+    r->sym = 0;
     has_l = 0;
     switch (Check.Found) {
     case COMP_NONE:

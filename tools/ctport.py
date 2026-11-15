@@ -51,8 +51,9 @@ PATCHES = [
      '    Value += Offset;                              /* +/- offset */\n',
      '    Value += Offset;                              /* +/- offset */\n'
      '    /* LCR-P1: in high current mode the pin itself is the shunt; at about 60 mA it reaches U_ref\n'
-     '       sooner than RiL (measured at low current) says. Fitted on the meter: 50 uH, 36 uH, 2.2 mH. */\n'
-     '    if (!(Mode & MODE_LOW_CURRENT)) Value = Value * 83 / 100;\n'),
+     '       sooner than RiL (measured at low current) says. Fitted on the meter against a DE-5000 at 10 kHz\n'
+     '       (10 tick offset): 44.49 uH reads -2.4 %, 31.01 uH +2.1 %, 2.016 mH (25 Ohm) +2.1 %. */\n'
+     '    if (!(Mode & MODE_LOW_CURRENT)) Value = Value * 177 / 200;\n'),
     ('inductor.c',
      '      if (Counter <= 100)          /* time <= 100ns */\n',
      '      if (Counter <= 100)          /* time <= 100ns */\n',

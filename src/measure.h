@@ -19,6 +19,9 @@ struct mres {
     char title[17];
     int n;
     char line[MRES_LINES][17];
+    uint8_t sym;                    /* SYM_x (sym.h) for the result screen, 0 = text only */
+    uint8_t pins[3];                /* probe number (1..3) per symbol terminal */
+    uint8_t first;                  /* first line[] shown under the symbol (skips the pinout line) */
 };
 const struct mres *measure_result(void);   /* text of the last measure_run() */
 /* "1.234k" style text, 4 significant digits */

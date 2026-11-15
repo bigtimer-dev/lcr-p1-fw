@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: EUPL-1.2
- * LCR-P1 open firmware, phase 2 step 2: ComponentTester probing (resistors so far).
+ * LCR-P1 open firmware: ComponentTester probing, results as text or as a symbol with probe numbers.
  * Page 0: TEST runs a probing cycle and shows the result. Page 1 (serial #A switches pages): ADC readings.
- * ZENER: Zener mode, HV boost on, voltage of the K-A-A socket.
+ * ZENER: Zener mode (K-A-A socket), TEST measures with the HV boost on.
  * Mode switch on IR: decodes remote controls (ir.c).
- * Hold TEST 1 s = off, 3 min idle = off, low battery = off. The HV boost is never enabled.
+ * Hold TEST 1 s = off, 3 min idle = off, low battery = off. The HV boost is on only while a Zener reads.
  */
 #include "adc.h"
 #include "hw.h"
@@ -11,11 +11,12 @@
 #include "measure.h"
 #include "adjust.h"
 #include "ir.h"
+#include "sym.h"
 #include "board.h"
 #include "lcd.h"
 #include "uart.h"
 
-#define VERSION   "1.0"
+#define VERSION   "1.1"
 #define IDLE_OFF_MS (3u * 60 * 1000)
 #define LOWBAT_MV 3300          /* as stock: switch off at or below this */
 
@@ -54,22 +55,68 @@ static void off(const char *why)
     power_off();
 }
 
-/* Zener mode (ZENER key): the boost converter (PF6) feeds the K-A-A socket through a ~5 mA current
-   limit, PA2 reads the socket through a 10:1 divider. Like the stock firmware the relay is on meanwhile.
-   Shows the voltage live; an empty socket reads the boost's open voltage (over 33 V: "open"). TEST or
-   ZENER leaves (boost off), the IR switch too. Returns the time of the last key press. */
+static int no_header;                          /* a symbol result used the whole screen */
+
+/* symbol results: title at the top, the symbol with probe numbers at its terminals, values below */
+static void sym_screen(const char *title, uint8_t sym, const uint8_t *pins, int npins)
+{
+    char g[2] = {(char)sym, 0};
+    lcd_fill(0, 0, LCD_W, LCD_H, C_BLACK);
+    no_header = 1;
+    lcd_text(2, 1, title, &font16, C_LABEL, C_BLACK);
+    int x0 = (LCD_W - SYM_W) / 2, y0 = 19;
+    lcd_text(x0, y0, g, &sym_font, C_WHITE, C_BLACK);
+    for (int i = 0; i < npins; i++) {
+        char d[2] = {(char)(pins[i] < 10 ? '0' + pins[i] : pins[i]), 0};
+        lcd_text(x0 + sym_label[sym - 1][i][0], y0 + sym_label[sym - 1][i][1], d, &font16, C_ACCENT, C_BLACK);
+    }
+}
+
+/* "label value" row: label in font16, value in font24 */
+static void big_row(int y, const char *label, const char *value)
+{
+    lcd_text(4, y + 6, label, &font16, C_LABEL, C_BLACK);
+    lcd_text(4 + 8 * 3, y, value, &font24, C_ACCENT, C_BLACK);
+}
+
+/* Zener mode (ZENER key): screen with the K-A-A socket; TEST measures once. The boost converter (PF6)
+   feeds the socket through a ~5 mA current limit only during the measurement (relay on, as in the stock
+   firmware; the socket voltage rises over ~1 s as the output charges); PA2 reads it through a 10:1 divider. An empty socket reads the boost's open voltage (37 V on
+   the meter): "open" above 33 V. ZENER or the IR switch leave. Returns the time of the last key press. */
 #define ZENER_OPEN_MV 33000                     /* above: socket open (stock limit 33 V) */
+static uint32_t zener_read(void)
+{
+    relay(1);
+    gpio_set(PIN_HV, 1);
+    uint32_t t0 = g_ms, mv = 0, prev = ~0u;
+    while (g_ms - t0 < 3000) {                  /* settled: two readings 100 ms apart within 0.1 % */
+        delay_ms(100);
+        wdt_feed();
+        uint32_t raw = adc_raw(ADC_CH_ZENER, 16) / 16;
+        mv = raw * 10 * adc_vref_mv / 4096;
+        uprintf("#Z %u %u\r\n", mv, raw);
+        if (g_ms - t0 >= 500 && prev != ~0u && (mv > prev ? mv - prev : prev - mv) * 1000 <= prev + 10)
+            break;
+        prev = mv;
+    }
+    gpio_set(PIN_HV, 0);
+    relay(0);
+    return mv;
+}
+
+static void zener_screen(void)
+{
+    static const uint8_t pins[2] = {'K', 'A'};
+    sym_screen("Zener", SYM_ZENER, pins, 2);
+    lcd_text(4, 112, "TEST: measure", &font16, C_LABEL, C_BLACK);
+}
+
 static uint32_t zener_mode(void)
 {
     char b[16];
-    uint32_t last = 0, idle = g_ms;
-    int last_state = -1;
-    header();
-    lcd_text(4, 52, "Zener", &font16, C_ACCENT, C_BLACK);
-    lcd_text(4, 110, "TEST: back", &font16, C_LABEL, C_BLACK);
-    relay(1);
-    gpio_set(PIN_HV, 1);
-    uprintf("zener on\r\n");
+    uint32_t idle = g_ms;
+    zener_screen();
+    uprintf("zener mode\r\n");
     for (;;) {
         wdt_feed();
         beep_poll();
@@ -78,36 +125,29 @@ static uint32_t zener_mode(void)
             off("key");
         if (ev != KEY_NONE)
             idle = g_ms;
-        if (ev == KEY_TEST || ev == KEY_ZENER || mode_ir())
+        if (ev == KEY_ZENER || mode_ir())
             break;
         if (g_ms - idle > IDLE_OFF_MS)
             off("idle");
-        if (g_ms - last < 250)
+        if (ev != KEY_TEST)
             continue;
-        last = g_ms;
-        uint32_t raw = adc_raw(ADC_CH_ZENER, 16) / 16;
-        uint32_t mv = raw * 10 * adc_vref_mv / 4096;
-        int state = mv > ZENER_OPEN_MV ? 2 : mv < 100 ? 0 : 1;
-        if (state == 1) {
-            fmt(b, sizeof b, "%u.%02u V", mv / 1000, mv % 1000 / 10);
-            lcd_fill(0, 76, LCD_W, 40, C_BLACK);
-            lcd_text((LCD_W - lcd_text_width(b, &font24)) / 2, 84, b, &font24, C_ACCENT, C_BLACK);
-        } else if (state != last_state) {
-            const char *t = state ? "open" : "short";
-            lcd_fill(0, 76, LCD_W, 40, C_BLACK);
-            lcd_text((LCD_W - lcd_text_width(t, &font24)) / 2, 84, t, &font24, C_WHITE, C_BLACK);
-        }
-        if (state != last_state && state == 1)
+        lcd_fill(0, 66, LCD_W, 40, C_BLACK);
+        lcd_text(4, 74, "measuring...", &font16, C_LABEL, C_BLACK);
+        uint32_t mv = zener_read();
+        lcd_fill(0, 66, LCD_W, 40, C_BLACK);
+        if (mv > ZENER_OPEN_MV || mv < 100) {
+            const char *t = mv < 100 ? "short" : "open";
+            lcd_text((LCD_W - lcd_text_width(t, &font24)) / 2, 72, t, &font24, C_WHITE, C_BLACK);
+            uprintf("#R Zener %s\r\n", t);
             beep(20);
-        last_state = state;
-        static uint32_t last_log;
-        if (g_ms - last_log >= 500) {
-            last_log = g_ms;
-            uprintf("#Z %u %u\r\n", mv, raw);
+        } else {
+            fmt(b, sizeof b, "%u.%02uV", mv / 1000, mv % 1000 / 10);
+            big_row(72, "Vz", b);
+            uprintf("#R Zener %u mV\r\n", mv);
+            beep(60);
         }
+        idle = g_ms;
     }
-    gpio_set(PIN_HV, 0);
-    relay(0);
     uprintf("zener off\r\n");
     return idle;
 }
@@ -235,6 +275,53 @@ static void show_result(int found, uint32_t ms)
     lcd_fill(0, 45, LCD_W, LCD_H - 45, C_BLACK);
     uprintf("#R found=%d vcc=%u fs=%u ref=%d ms=%u\r\n", found, measure_vcc(), measure_adc_fs(), measure_ref_ok(), ms);
     int n = measure_resistors();
+    if (n == 1) {                                       /* resistor or inductor: symbol layout */
+        uint8_t a, b, pins[2];
+        uint32_t value, lv;
+        int8_t scale, ls;
+        measure_resistor(0, &a, &b, &value, &scale);
+        pins[0] = a, pins[1] = b;
+        measure_format(v, sizeof v, value, scale, CH_OHM);
+        uprintf("#R R %u-%u %u e%d\r\n", a, b, value, scale);
+        if (measure_inductor(&lv, &ls)) {
+            sym_screen("Inductor", SYM_IND, pins, 2);
+            char l[16];
+            measure_format(l, sizeof l, lv, ls, "H");
+            big_row(68, "L", l);
+            big_row(98, "R", v);
+            uprintf("#R L %u e%d\r\n", lv, ls);
+        } else {
+            sym_screen("Resistor", SYM_RES, pins, 2);
+            big_row(76, "R", v);
+        }
+        return;
+    }
+    const struct mres *r = measure_result();
+    if (!n && r->sym) {
+        uprintf("#R %s\r\n", r->title);
+        for (int i = 0; i < r->n; i++)
+            uprintf("#R   %s\r\n", r->line[i]);
+        int two = r->sym <= SYM_DIODE;
+        sym_screen(r->title, r->sym, r->pins, two ? 2 : 3);
+        int y = 66, i = r->first;
+        if (two && i < r->n) {                          /* main value large: "C 4.7uF", "A1 K2 0.65V" */
+            const char *t = r->line[i], *val = t;
+            for (const char *p = t; *p; p++)
+                if (*p == ' ')
+                    val = p + 1;
+            char lab[4] = {0};
+            if (r->sym == SYM_DIODE)
+                lab[0] = 'V', lab[1] = 'f';
+            else
+                for (int k = 0; k < 3 && t[k] && t[k] != ' '; k++)
+                    lab[k] = t[k];
+            big_row(y, lab, val);
+            y += 30, i++;
+        }
+        for (; i < r->n && y <= LCD_H - 16; i++, y += 16)
+            lcd_text(4, y, r->line[i], &font16, C_WHITE, C_BLACK);
+        return;
+    }
     if (n) {
         lcd_text(4, 48, measure_result()->title, &font16, C_LABEL, C_BLACK);
         for (int i = 0; i < n; i++) {
@@ -388,6 +475,8 @@ int main(void)
             if (page)
                 page = 0, redraw = 1, header();
             lcd_fill(0, 45, LCD_W, LCD_H - 45, C_BLACK);
+            if (no_header)
+                header(), no_header = 0;
             lcd_text(4, 56, "probing...", &font16, C_LABEL, C_BLACK);
             uint32_t t0 = g_ms;
             int found = measure_run();

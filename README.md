@@ -13,7 +13,7 @@ then press **TEST** to enter update mode at any time, so stock firmware can alwa
 
 ## Status
 
-Version 1.0 runs on the meter and measures with ComponentTester's algorithms:
+Version 1.1 runs on the meter and measures with ComponentTester's algorithms:
 
 | | |
 |---|---|
@@ -27,7 +27,8 @@ Version 1.0 runs on the meter and measures with ComponentTester's algorithms:
 | Zener diodes | ZENER key: K-A-A socket, 0.1 to 33 V (boost open voltage ~37 V), ~5 mA |
 | self-adjustment | R0 (probe resistance), RiL / RiH (MCU pin resistance), C0 (probe capacitance) |
 
-All functions of the stock firmware are covered.
+All functions of the stock firmware are covered. Results with one part (resistor, coil, capacitor, diode,
+BJT, MOSFET, JFET) are drawn as a symbol with the probe numbers at its terminals, values below.
 
 Typical test times: empty socket 1.1 s, resistor 1.2 s, 330 µF electrolytic 5.6 s (large caps need time to
 charge and discharge).
@@ -35,8 +36,9 @@ charge and discharge).
 ### Use
 
 - **TEST**: measure the part in the socket. The result stays on screen until the next key.
-- **ZENER** (press and release): Zener mode. The boost converter feeds the K-A-A socket and the voltage
-  is shown live ("open" above 33 V, "short" below 0.1 V); TEST or ZENER goes back with the boost off.
+- **ZENER** (press and release): Zener screen for the K-A-A socket. **TEST** measures: the boost converter
+  is switched on until the reading settles (up to 3 s), then off again; Vz is shown ("open" above 33 V,
+  "short" below 0.1 V). ZENER goes back. On the meter: 5.1 V Zener 5.005 V, 12 V Zener 11.98 V.
 - **ZENER held + TEST**: self-adjustment. Short all three probes and press TEST, then remove the short and
   press TEST. The values are stored in flash and survive firmware updates. ZENER cancels.
 - **TEST held 1 s**: power off. The meter also switches off after 3 min without use and at 3.3 V battery.
@@ -55,11 +57,11 @@ DE-5000 at 10 kHz; near 0 Ω repeated readings vary by about 0.1 Ω.
 
 As upstream: probe-1 is switched high and the time until the current through the coil (on Rl, or for
 coils below 40 Ω on the pin's own resistance) reaches the comparator threshold gives L. The comparator
-and timer are COMP1 and TIM3 at 48 MHz. Two corrections were fitted on the meter: 10 timer ticks of fixed
-delay, and the threshold scaled by 0.83 in the high-current mode, where the pin reaches it sooner than
-its resistance at low current predicts. Checked on the meter: 50 µH reads 47.2 µH, 36 µH reads 34.4 µH,
-2.2 mH reads 2.30 mH; plain resistors (0 Ω, 10 Ω, 2 kΩ) show no inductance. Coils above 40 Ω (the
-low-current mode) are not checked on the meter yet.
+and timer are COMP1 and TIM3 at 48 MHz. Two corrections were fitted on the meter against a DE-5000 (10 kHz):
+10 timer ticks of fixed delay, and the threshold scaled by 0.885 in the high-current mode, where the pin
+reaches it sooner than its resistance at low current predicts. Expected within ±2.5 %: 44.49 µH, 31.01 µH
+and 2.016 mH (25 Ω, reads 2.059 mH); plain resistors (0 Ω, 10 Ω, 2 kΩ) show no inductance. Coils above
+40 Ω (the low-current mode) are not checked on the meter yet.
 
 ### IR remotes
 
@@ -115,4 +117,5 @@ configuration is `ct/config_lcrp1.h`. Re-run the script after an upstream update
 ## Licence
 
 EUPL-1.2 (see LICENSE). Fonts: Terminus Font 4.49.1, © Dimitar Toshkov Zhekov, SIL Open Font License 1.1
-(`fonts/OFL.TXT`), converted to bitmaps by `tools/mkfont.py`.
+(`fonts/OFL.TXT`), converted to bitmaps by `tools/mkfont.py`. Component symbols are drawn by
+`tools/mksym.py` (Pillow) into `src/sym_data.c`.

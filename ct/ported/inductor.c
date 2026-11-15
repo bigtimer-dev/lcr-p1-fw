@@ -463,8 +463,9 @@ uint8_t MeasureInductor(Resistor_Type *Resistor)
     Value = Cfg.Bandgap + NV.CompOffset;          /* = U_ref (in mV) */
     Value += Offset;                              /* +/- offset */
     /* LCR-P1: in high current mode the pin itself is the shunt; at about 60 mA it reaches U_ref
-       sooner than RiL (measured at low current) says. Fitted on the meter: 50 uH, 36 uH, 2.2 mH. */
-    if (!(Mode & MODE_LOW_CURRENT)) Value = Value * 83 / 100;
+       sooner than RiL (measured at low current) says. Fitted on the meter against a DE-5000 at 10 kHz
+       (10 tick offset): 44.49 uH reads -2.4 %, 31.01 uH +2.1 %, 2.016 mH (25 Ohm) +2.1 %. */
+    if (!(Mode & MODE_LOW_CURRENT)) Value = Value * 177 / 200;
     Value *= R_total;                             /* * R_total (in 0.1 Ohms) */
     Value /= Factor;                              /* / R_shunt (in 0.1 Ohms) */
     Value /= 5;                                   /* / 5000mV, * 10^3 */

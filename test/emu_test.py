@@ -420,7 +420,7 @@ class Board:
             n = ctrl >> 4 & 7
             vref = self.vcc * (ref >> 1 & 63) / 64
             if self.driven(*self.PROBE_PINS[n][0]) == (True, 0):
-                vref *= 0.83                        # sense pin as shunt at ~60 mA: trips early (fitted to the meter)
+                vref *= 0.885                       # sense pin as shunt at ~55 mA: trips early (fitted to the meter)
             tx = self.ind_cross(n, vref)            # us after the timer start, None: never
             if tx is not None and self.tc_t0 + tx <= self.us and self.tc_t0 + tx >= self.tc_arm:
                 self.tc_ccr = int((tx + 0.21) * 48) & 0xFFFF    # + pin/comparator/capture delay (meter: 10 ticks)
@@ -868,8 +868,8 @@ out, _ = measure({(0, 2): 360})
 r = resistors(out)
 check('no phantom resistors when open pairs read just under 20 mV', len(r) == 1 and r[0][0] == '1-3', r)
 bd.C_NODE = c_node
-check('result screen stays (no ADC rows drawn over it)', bd.lcd.count(0xB47F, 60, 92) > 150
-      and bd.lcd.count(0xFFFF, 0, 128) < 50, (bd.lcd.count(0xB47F, 60, 92), bd.lcd.count(0xFFFF, 0, 128)))
+check('result screen stays (no ADC rows drawn over it)', bd.lcd.count(0xB47F, 72, 104) > 150
+      and bd.lcd.count(0xFFFF, 64, 128) < 50, (bd.lcd.count(0xB47F, 72, 104), bd.lcd.count(0xFFFF, 64, 128)))
 bd.dut = {}
 check('beep: buzzer channel enabled then disabled again', bd.reg.get(0x40013420) == 0x12, hex(bd.reg.get(0x40013420, 0)))
 n0 = len(buzz)
@@ -922,6 +922,7 @@ def ind_tests():
     for ohms in (100, 10):
         out, _ = measure({(0, 1): ohms})
         check(f'plain {ohms} Ohm resistor: no inductance', '#R L ' not in out and '#R R 1-2' in out, out[-200:])
+
     bd.ind = {}
 
 # ---- IR remotes (generators as in lcr-p1-linux firmware/test/ir_test.py; +100 us marks, -100 us spaces)
@@ -1166,42 +1167,45 @@ check('drive experiment runs and restores', '#X end' in s and bd.pin('B', 3) == 
 check('diag: probes shorted again afterwards', bd.pin('B', 3) == 0)
 bd.dut = {}
 
-# --- ZENER: Zener mode (boost on), released on exit; the ZENER+TEST chord never starts it
+# --- ZENER: Zener screen (boost off); TEST measures with the boost on, then off again; ZENER leaves.
+#     The ZENER+TEST chord never starts it.
 def zener_press():
     bd.set_in('F', 7, 0); run_ms(300); bd.set_in('F', 7, 1); run_ms(600)
+
+def zener_measure():
+    hv0 = sum(e == 'PF6=1' for _, e in bd.events)
+    bd.set_in('C', 13, 0); run_ms(200); bd.set_in('C', 13, 1)
+    s = ''
+    for _ in range(60):
+        run_ms(100); s += uart_text()
+        if '#R Zener' in s:
+            break
+    run_ms(300); s += uart_text()
+    return s, sum(e == 'PF6=1' for _, e in bd.events) - hv0
 
 uart_text()
 bd.zener = 12.0
 zener_press()
-s = ''
-for _ in range(30):
-    run_ms(100); s += uart_text()
-    if s.count('#Z ') >= 2:
-        break
-zl = [l.split() for l in s.splitlines() if l.startswith('#Z ')]
-check('ZENER: boost + relay on, 12 V diode read as 12 V', bd.pin('F', 6) == 1 and bd.pin('B', 3) == 1
-      and 'zener on' in s and zl and abs(int(zl[-1][1]) - 12000) < 360, s[-200:])   # emulated ref ~2 % off
+s = uart_text()
+check('ZENER: Zener screen, boost and relay still off', 'zener mode' in s and bd.pin('F', 6) == 0
+      and bd.pin('B', 3) == 0 and '#Z ' not in s, s[-200:])
+run_ms(1500)
+check('Zener screen: no reading without TEST', '#Z ' not in uart_text() and bd.pin('F', 6) == 0)
+s, hv = zener_measure()
+m = [l for l in s.splitlines() if l.startswith('#R Zener ')]
+check('TEST: one measurement, 12 V diode read as 12 V, boost off afterwards', hv == 1 and bd.pin('F', 6) == 0
+      and bd.pin('B', 3) == 0 and m and abs(int(m[-1].split()[2]) - 12000) < 360, s[-300:])  # emulated ref ~2 % off
 bd.lcd.png(os.path.join(OUTDIR, 'screen_zener.png'))
-check('Zener voltage drawn', bd.lcd.count(0xB47F, 80, 112) > 100)
+check('Zener symbol and voltage drawn', bd.lcd.count(0xFFFF, 19, 63) > 150 and bd.lcd.count(0xB47F, 72, 96) > 100)
 bd.zener = None
-run_ms(800)
-s = uart_text()
-zl = [l.split() for l in s.splitlines() if l.startswith('#Z ')]
-check('empty socket: open (> 33 V)', zl and int(zl[-1][1]) > 33000 and bd.lcd.count(0xFFFF, 80, 112) > 50, s[-200:])
-zener_press()
-s = uart_text()
-check('ZENER again: boost and relay off', bd.pin('F', 6) == 0 and bd.pin('B', 3) == 0 and 'zener off' in s, s[-200:])
+s, hv = zener_measure()
+check('empty socket: open (> 33 V)', '#R Zener open' in s and bd.lcd.count(0xFFFF, 72, 96) > 50, s[-200:])
 bd.zener = 5.1
+s, hv = zener_measure()
+check('5.1 V diode', any(l.startswith(('#R Zener 49', '#R Zener 50', '#R Zener 51')) for l in s.splitlines()), s[-300:])
 zener_press()
-s = ''
-for _ in range(30):
-    run_ms(100); s += uart_text()
-    if '#Z ' in s:
-        break
-bd.set_in('C', 13, 0); run_ms(300); bd.set_in('C', 13, 1); run_ms(600)
-s += uart_text()
-check('TEST leaves Zener mode (5.1 V shown before)', bd.pin('F', 6) == 0 and 'zener off' in s
-      and any(l.startswith(('#Z 49', '#Z 50', '#Z 51')) for l in s.splitlines()), s[-300:])
+s = uart_text()
+check('ZENER leaves Zener mode, boost off', bd.pin('F', 6) == 0 and 'zener off' in s, s[-200:])
 bd.zener = None
 hv_on = sum(e == 'PF6=1' for _, e in bd.events)
 
