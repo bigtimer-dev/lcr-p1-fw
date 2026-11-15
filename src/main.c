@@ -7,11 +7,12 @@
 #include "hw.h"
 #include "ct_hal.h"
 #include "measure.h"
+#include "adjust.h"
 #include "board.h"
 #include "lcd.h"
 #include "uart.h"
 
-#define VERSION   "0.5"
+#define VERSION   "0.7"
 #define IDLE_OFF_MS (3u * 60 * 1000)
 #define LOWBAT_MV 3300          /* as stock: switch off at or below this */
 
@@ -146,6 +147,26 @@ static void drive_experiment(void)
     uprintf("#X end\r\n");
 }
 
+static void adj_say(const char *l1, const char *l2)
+{
+    lcd_fill(0, 45, LCD_W, LCD_H - 45, C_BLACK);
+    lcd_text(4, 56, l1, &font16, C_WHITE, C_BLACK);
+    lcd_text(4, 76, l2, &font16, C_LABEL, C_BLACK);
+    uprintf("#J %s %s\r\n", l1, l2);
+}
+
+static int adj_key(void)                            /* TEST continues, ZENER cancels; serial T / Z alike */
+{
+    wdt_feed();
+    int c = uart_getc();
+    if (c == 'T' || c == 'Z')
+        return c == 'T' ? 1 : 2;
+    int ev = key_poll();
+    return ev == KEY_TEST || ev == KEY_TEST_LONG ? 1 : ev == KEY_ZENER ? 2 : 0;
+}
+
+static const struct adjust_ui adj_ui = {adj_say, adj_key};
+
 static void show_result(int found, uint32_t ms)
 {
     char v[16], line[24];
@@ -207,7 +228,17 @@ int main(void)
         int ev = key_poll();
         if (ev != KEY_NONE)
             idle = g_ms;
-        if (ev == KEY_TEST || c_test) {
+        if ((ev == KEY_TEST && key_zener_down()) || c_test == 2) {   /* ZENER held + TEST: self-adjust */
+            c_test = 0;
+            page = 0, header();
+            int n = adjust_run(&adj_ui);
+            char b[17];
+            fmt(b, sizeof b, n > 0 ? "%d values saved" : "nothing changed", n);
+            adj_say(n > 0 ? "Adjust done" : "Adjust failed", b);
+            redraw = 0, last_t = last_z = last_r = last_m = -2;
+            shown = 1;
+            idle = g_ms;                        /* no beeps in the self-adjust (user's choice) */
+        } else if (ev == KEY_TEST || c_test) {
             c_test = 0;                         /* no beep here: the test blocks the loop, it would last */
             if (page)
                 page = 0, redraw = 1, header();
@@ -216,6 +247,7 @@ int main(void)
             uint32_t t0 = g_ms;
             int found = measure_run();
             show_result(found, g_ms - t0);
+            nv_autosave();                      /* CompOffset follows the cap measurements */
             redraw = 0, last_t = last_z = last_r = last_m = -2;     /* keep the result on screen */
             shown = 1;
             beep(found ? 60 : 20);
@@ -291,6 +323,7 @@ int main(void)
             cmd[cmd_len++] = (char)c;
         else if ((c == '\r' || c == '\n') && cmd_len >= 2) {
             cmd[cmd_len] = 0;
+            idle = g_ms;                        /* a serial command counts as use (no idle power-off) */
             unsigned arg = 0;
             for (int i = 2; i < cmd_len && cmd[i] >= '0' && cmd[i] <= '9'; i++)
                 arg = arg * 10 + (unsigned)(cmd[i] - '0');
@@ -298,6 +331,17 @@ int main(void)
             cmd_len = 0;
             if (k == 'T')
                 c_test = 1;                     /* run a test */
+            else if (k == 'J')
+                c_test = 2;                     /* self-adjustment */
+            else if (k == 'N')
+                nv_print("current");
+            else if (k == 'E' && arg <= 15) {
+                relay(1);                       /* probes free */
+                delay_ms(30);
+                adc_timing_scan(arg);
+                relay(0);
+                uprintf("#E end\r\n");
+            }
             else if (k == 'D')
                 probe_diag();
             else if (k == 'G')

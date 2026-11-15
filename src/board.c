@@ -2,6 +2,7 @@
  * Clock, GPIO, power latch, relay, buzzer, keys.
  */
 #include "board.h"
+#include "uart.h"
 #include "hw.h"
 
 volatile uint32_t g_ms;
@@ -106,8 +107,10 @@ void wdt_feed(void)
 void delay_ms(uint32_t ms)
 {
     uint32_t t = g_ms;
-    while (g_ms - t < ms)
+    while (g_ms - t < ms) {
         wdt_feed();
+        uart_poll();
+    }
 }
 
 void relay(int on)

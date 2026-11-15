@@ -9,10 +9,12 @@
 #include "functions.h"
 #include "uart.h"
 #include "font.h"
+#include "adjust.h"
 
 void measure_init(void)
 {
-    memcpy(&NV, &NV_Adjust_1, sizeof NV);       /* adjustment profile #1 defaults (no NV store yet) */
+    memcpy(&NV, &NV_Adjust_1, sizeof NV);       /* adjustment profile #1 defaults ... */
+    nv_print(nv_load() ? "loaded" : "defaults");    /* ... unless stored in flash (src/adjust.c) */
     Cfg.Samples = ADC_SAMPLES;
     Cfg.AutoScale = 0;                          /* no bandgap switching on this ADC */
     Cfg.Ref = 1;
@@ -63,10 +65,38 @@ static void check_drive(void)
         Cfg.Vcc = max;
 }
 
+/* start of a cycle (also for the self-adjustment): references, discharge, drive level; 0 = error */
+int measure_prepare(void)
+{
+    check_refs();
+    DischargeProbes();
+    if (Check.Found != COMP_ERROR)
+        check_drive();
+    return Check.Found != COMP_ERROR;
+}
+
 static struct mres result;
 static void describe(struct mres *r);
 
 const struct mres *measure_result(void) { return &result; }
+
+/* debug build: "#T <step> ms= sleep= adc= (n)" per step of a test, the time since the previous step */
+#ifdef CT_DEBUG
+extern volatile uint32_t g_ms;
+static void prof(const char *step)
+{
+    static uint32_t t0;
+    static struct ct_prof p0;
+    if (strcmp(step, "start"))
+        uprintf("#T %s ms=%u sleep=%u/%u adc=%u/%u\r\n", step, (unsigned)(g_ms - t0),
+                (unsigned)(ct_prof.sleep_ms - p0.sleep_ms), (unsigned)(ct_prof.n_sleep - p0.n_sleep),
+                (unsigned)((ct_prof.adc_us - p0.adc_us) / 1000), (unsigned)(ct_prof.n_adc - p0.n_adc));
+    t0 = g_ms;
+    p0 = ct_prof;
+}
+#else
+#define prof(s) ((void)0)
+#endif
 
 int measure_run(void)
 {
@@ -82,28 +112,32 @@ int measure_run(void)
     Semi.I_value = 0;
     AltSemi.U_1 = AltSemi.U_2 = 0;
 
+    prof("start");
     ADC_DDR_set(0);                             /* releases the probes (relay on) */
     MilliSleep(20);                             /* relay settles */
-    check_refs();
-
-    DischargeProbes();
-    if (Check.Found != COMP_ERROR)
-        check_drive();
-    if (Check.Found != COMP_ERROR) {
-        CheckProbes(PROBE_1, PROBE_2, PROBE_3);
-        CheckProbes(PROBE_2, PROBE_1, PROBE_3);
-        CheckProbes(PROBE_1, PROBE_3, PROBE_2);
-        CheckProbes(PROBE_3, PROBE_1, PROBE_2);
-        CheckProbes(PROBE_2, PROBE_3, PROBE_1);
-        CheckProbes(PROBE_3, PROBE_2, PROBE_1);
+    int ok = measure_prepare();
+    prof("prepare");
+    if (ok) {
+        static const uint8_t perm[6][3] = {{PROBE_1, PROBE_2, PROBE_3}, {PROBE_2, PROBE_1, PROBE_3},
+            {PROBE_1, PROBE_3, PROBE_2}, {PROBE_3, PROBE_1, PROBE_2}, {PROBE_2, PROBE_3, PROBE_1},
+            {PROBE_3, PROBE_2, PROBE_1}};
+        for (int i = 0; i < 6; i++) {
+            CheckProbes(perm[i][0], perm[i][1], perm[i][2]);
+            prof("CheckProbes");
+        }
         CheckAlternatives();
+        prof("alternatives");
         if (Check.Found == COMP_NONE || Check.Found == COMP_RESISTOR) {
             MeasureCap(PROBE_3, PROBE_1, 0);
+            prof("MeasureCap 3-1");
             MeasureCap(PROBE_3, PROBE_2, 1);
+            prof("MeasureCap 3-2");
             MeasureCap(PROBE_2, PROBE_1, 2);
+            prof("MeasureCap 2-1");
         }
     }
     describe(&result);                          /* may measure more (diode leakage): before the relay */
+    prof("describe");
     R_DDR_set(0);
     R_PORT_set(0);
     ADC_PORT_set(0);
@@ -277,6 +311,9 @@ static void describe_cap(struct mres *r)              /* upstream Show_Capacitor
             m = &Caps[i];
     fmt(r->title, sizeof r->title, "Capacitor %u-%u", m->A + 1, m->B + 1);
     value_line(r, "C", m->Value, m->Scale, "F");
+    uint16_t esr = MeasureESR(m);                     /* upstream: from 10 nF */
+    if (esr < UINT16_MAX)
+        value_line(r, "ESR", esr, -2, CH_OHM);
     if (m->I_leak_Value)
         value_line(r, "Il", m->I_leak_Value, m->I_leak_Scale, "A");
 }

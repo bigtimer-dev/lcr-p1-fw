@@ -18,10 +18,28 @@ void uart_init(void)
     UART_CR1 = 0x200C;                          /* enable, TX, RX */
 }
 
+/* Receive buffer: the USART holds a single byte (87 us at 115200), and the main loop is blocked for
+   milliseconds at a time (the once-a-second ADC rows, tests, long replies). uart_poll() is called from
+   those waits (ADC conversions, timer waits, transmitting) so no byte is lost between main-loop passes. */
+static uint8_t rx_buf[64];
+static volatile uint8_t rx_head, rx_tail;
+
+void uart_poll(void)
+{
+    uint32_t sts = UART_STS;
+    if (sts & 0x20) {                           /* received a byte */
+        uint8_t c = (uint8_t)UART_DAT, h = (uint8_t)((rx_head + 1) % sizeof rx_buf);
+        if (h != rx_tail)
+            rx_buf[rx_head] = c, rx_head = h;   /* (full: dropped) */
+    } else if (sts & 0x08) {                    /* overrun without a byte: reading STS then DAT clears it; */
+        (void)UART_DAT;                         /* otherwise reception stays blocked */
+    }
+}
+
 void uart_putc(char c)
 {
     for (unsigned n = 0; !(UART_STS & 0x80) && n < 100000; n++)
-        ;
+        uart_poll();
     UART_DAT = (uint8_t)c;
 }
 
@@ -33,12 +51,12 @@ void uart_puts(const char *s)
 
 int uart_getc(void)
 {
-    uint32_t sts = UART_STS;
-    if (sts & 0x20)                             /* received a byte */
-        return (int)(UART_DAT & 0xFF);
-    if (sts & 0x08)                             /* overrun without a byte: reading STS then DAT clears it; */
-        (void)UART_DAT;                         /* otherwise reception stays blocked */
-    return -1;
+    uart_poll();
+    if (rx_tail == rx_head)
+        return -1;
+    int c = rx_buf[rx_tail];
+    rx_tail = (uint8_t)((rx_tail + 1) % sizeof rx_buf);
+    return c;
 }
 
 struct sink { char *p; int left; };

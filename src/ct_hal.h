@@ -37,7 +37,13 @@ void ct_wait_us(uint16_t us);
  * probes not in ddr (ADC_DDR value while charging) and returns the ticks (bit 0..15) and timer overflows
  * (bit 16..31); overflows == max_ovf means timeout. */
 #define CT_COMP_VREF 15
+/* ESR: 255 x (U_1 + U_3) and (U_2 + U_4) raw ADC sums as upstream MeasureESR (probe IDs 0..2); 0 = ADC error */
+uint8_t ct_esr_sums(uint8_t id1, uint8_t id2, uint32_t *sum1, uint32_t *sum2);
+extern uint8_t ct_esr_ks, ct_esr_kp;
 uint32_t ct_cap_charge(uint8_t channel, uint8_t ddr, uint16_t max_ovf);
 void MilliSleep(uint16_t ms);
+#ifdef CT_DEBUG
+extern struct ct_prof { uint32_t adc_us, n_adc, sleep_ms, n_sleep; } ct_prof;
+#endif
 /* waitNNus() / waitNNms(): declared by upstream functions.h, implemented in ct_hal.c */
 #endif

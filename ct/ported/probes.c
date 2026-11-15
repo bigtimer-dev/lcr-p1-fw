@@ -425,10 +425,11 @@ void DischargeProbes(void)
 
       Counter = 0;                      /* end loop */
     }
-    else                                /* go for another round */
-    {
+    else if (!(Flags & (1 << ID)))      /* LCR-P1: wait only while this probe is still charged */
+    {                                   /* (upstream slept 50 ms after every probe that was already
+                                           discharged too: 50-100 ms per call, 10+ calls per test) */
       wdt_reset();                      /* reset watchdog */
-      MilliSleep(50);                   /* wait for 50ms */
+      MilliSleep(U_c < 50 ? 10 : 50);   /* LCR-P1: 10 ms steps for the last few mV */
     }
   }
 

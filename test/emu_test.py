@@ -16,7 +16,7 @@ import sys
 import zlib
 
 from unicorn import UC_ARCH_ARM, UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE, UC_MODE_MCLASS, UC_MODE_THUMB, Uc, UcError
-from unicorn.arm_const import UC_ARM_REG_PC, UC_ARM_REG_SP
+from unicorn.arm_const import UC_ARM_REG_PRIMASK, UC_ARM_REG_PC, UC_ARM_REG_SP
 
 LOWBAT = '--lowbat' in sys.argv
 args = [a for a in sys.argv[1:] if a != '--lowbat']
@@ -156,7 +156,8 @@ class Board:
         self.tc_run, self.tc_sts, self.tc_ccr, self.tc_t0, self.tc_ovf = False, 0, 0, 0, 0
         self.vcc = 5.020                        # ADC full scale (V)
         self.vdrive = self.vcc                  # probe pins drive to the ADC full scale (4.39 V seen on the meter was the stale-sample artifact)
-        self.adc_last = None                    # (channel, value) of the previous conversion
+        self.adc_dat, self.adc_pending = 0, None    # data register; (time, value) of the running conversion
+        self.esr = {}                           # {(probe_a, probe_b): ohms} series resistance of self.caps
 
     def pin(self, port, n):
         return self.out[port] >> n & 1
@@ -164,8 +165,43 @@ class Board:
     def set_in(self, port, n, v):
         self.inp[port] = (self.inp[port] & ~(1 << n)) | (v << n)
 
+    def adc_start(self):
+        ch = self.reg.get(0x40020838, 0) & 31
+        if self.adc_pending:                            # the previous conversion has finished by now
+            self.adc_dat = self.adc_pending[1]
+        code0 = not self.reg.get(0x40020814, 0) >> 4 * ch & 15
+        if self.esr and ch in (1, 3, 6) and code0:      # ESR pulses (only they use sample code 0): sampled
+                                                        # at the end of a few-us pulse
+            v = self.esr_instant({1: 0, 3: 1, 6: 2}[ch])
+        else:
+            self.us = max(self.us, self.ms * 1000) + 4  # a conversion takes time: nodes settle meanwhile
+            v = self.probe_adc(ch) if ch in (1, 3, 6) else self.adc.get(ch, 0)
+        self.adc_pending = (self.us, v)
+
+    def esr_instant(self, n):
+        """Node voltage right after the drive changed: caps keep their voltage (in series with their ESR),
+        the 40 pF node capacitances follow at once."""
+        self.settle()
+        g, i, links = self.drive_state()
+        G = [[0.0] * 3 for _ in range(3)]
+        I = list(i)
+        for k in range(3):
+            G[k][k] += g[k]
+        for (a, b), r in links.items():
+            x = 1 / r
+            G[a][a] += x; G[b][b] += x; G[a][b] -= x; G[b][a] -= x
+        for (a, b) in self.caps:
+            x = 1 / (self.esr.get((a, b), 0) + 0.2)     # + 0.2 Ohm: probe leads (NV R0 default)
+            vc = self.v_nodes[a] - self.v_nodes[b]
+            G[a][a] += x; G[b][b] += x; G[a][b] -= x; G[b][a] -= x
+            I[a] += vc * x; I[b] -= vc * x
+        v = solve3(G, I)[n]
+        return max(0, min(4095, int(v / self.vcc * 4096)))
+
     def write(self, a, v):
         self.writes += 1
+        if a == 0x40020808 and v & 0x500000 == 0x500000:
+            self.adc_start()
         if a == 0x40003000:
             self.kr.append(v)
         base, off = a & ~0x3FF, a & 0x3FF
@@ -418,11 +454,11 @@ class Board:
         elif a == 0x40020800:
             v = 0x02                                    # ADC: conversion done
         elif a == 0x40020850:
-            ch = self.reg.get(0x40020838, 0) & 31
-            self.us = max(self.us, self.ms * 1000) + 4  # a conversion takes time: nodes settle meanwhile
-            v = self.probe_adc(ch) if ch in (1, 3, 6) else self.adc.get(ch, 0)
-            # hardware: the data register returns the previous conversion's result (one-deep lag)
-            v, self.adc_last = (self.adc_last[1] if self.adc_last else 0), (ch, v)
+            # hardware: the end-of-conversion flag stays set, so a read right after the start (adc.c convert())
+            # still gets the previous conversion; once time has passed (ESR: 30 us) the new one is there
+            if self.adc_pending and self.us > self.adc_pending[0]:
+                self.adc_dat, self.adc_pending = self.adc_pending[1], None
+            v = self.adc_dat
         elif a == 0x40000824:                           # TIM3 counter: 1 us per read, never behind the ms tick
             self.us = max(self.us + 1, self.ms * 1000)
             v = int(self.us) & 0xFFFF
@@ -514,7 +550,12 @@ uc.mem_map(0x40000000, 0x30000)
 uc.mem_map(0xE0000000, 0x100000)
 
 
+buzz = []                                               # buzzer channel register (TIM1 CCER) writes
+
+
 def on_w(uc, acc, a, sz, v, _):
+    if a == 0x40013420:
+        buzz.append(v)
     bd.write(a, v)
 
 
@@ -522,7 +563,50 @@ def on_r(uc, acc, a, sz, v, _):
     uc.mem_write(a, struct.pack('<I', bd.read(a) & 0xFFFFFFFF)[:sz])
 
 
-uc.hook_add(UC_HOOK_MEM_WRITE, on_w, begin=0x40000000, end=0x4002FFFF)
+NV_PAGE, FL = 0x0800F800, 0x40022000
+STOCK_CAL = bytes(range(0x30))                          # stand-in for the stock calibration record (0x0800FFD0)
+uc.mem_write(NV_PAGE, b'\xff' * 0x800)
+uc.mem_write(0x0800FFD0, STOCK_CAL)
+flash = {'locked': True, 'keys': [], 'errors': [], 'erases': [], 'words': 0}
+
+
+def on_flash_w(uc, acc, a, sz, v, _):
+    """flash controller: KEY1/KEY2 unlock, CTRL PG/PER/START/LOCK; programming only erased words"""
+    if a == FL + 0x04:
+        flash['keys'] = (flash['keys'] + [v])[-2:]
+        if flash['keys'] == [0x45670123, 0xCDEF89AB]:
+            flash['locked'] = False
+    elif a == FL + 0x10:
+        if v & 0x80:
+            flash['locked'] = True
+        elif v & 0x42 == 0x42:
+            if flash['locked']:
+                flash['errors'].append('erase while locked')
+            else:
+                pg = bd.reg.get(FL + 0x14, 0) & ~0x1FF
+                flash['erases'].append(pg)
+                if not NV_PAGE <= pg < NV_PAGE + 0x400:
+                    flash['errors'].append(f'erase outside the NV page {pg:#x}')
+                else:
+                    uc.mem_write(pg, b'\xff' * 0x200)
+    if a == FL + 0x0C:
+        return                                          # STS: write 1 to clear, reads 0 (never busy)
+    bd.write(a, v)
+
+
+def on_flash_prog(uc, acc, a, sz, v, _):
+    old = struct.unpack('<I', uc.mem_read(a & ~3, 4))[0]
+    ok = (not flash['locked'] and bd.reg.get(FL + 0x10, 0) & 1 and sz == 4 and not a & 3 and old == 0xFFFFFFFF
+          and NV_PAGE <= a < NV_PAGE + 0x400)
+    flash['words'] += 1
+    if not ok:
+        flash['errors'].append(f'bad write {a:#x}={v:#x} size {sz} old {old:#x} locked {flash["locked"]}')
+
+
+uc.hook_add(UC_HOOK_MEM_WRITE, on_flash_w, begin=FL, end=FL + 0x3FF)
+uc.hook_add(UC_HOOK_MEM_WRITE, on_flash_prog, begin=0x08000000, end=0x0800FFFF)
+uc.hook_add(UC_HOOK_MEM_WRITE, on_w, begin=0x40000000, end=FL - 1)
+uc.hook_add(UC_HOOK_MEM_WRITE, on_w, begin=FL + 0x400, end=0x4002FFFF)
 uc.hook_add(UC_HOOK_MEM_READ, on_r, begin=0x40000000, end=0x4002FFFF)
 uc.hook_add(UC_HOOK_MEM_WRITE, on_w, begin=0xE000E000, end=0xE000EFFF)
 
@@ -537,6 +621,8 @@ uc.reg_write(UC_ARM_REG_SP, sp)
 pc = [rv]
 CHUNK = 3000                                            # instructions per emulated millisecond
 
+
+held = [0]
 
 def run_ms(n):
     """Advance n ms. Each chunk of CHUNK instructions normally counts as 1 ms (idle code waiting for the tick).
@@ -553,7 +639,11 @@ def run_ms(n):
             pc[0] = uc.reg_read(UC_ARM_REG_PC)
             if bd.us == us0:
                 break                                   # idle: 1 ms
-            bd.us += CHUNK // 48
+            if uc.reg_read(UC_ARM_REG_PRIMASK) & 1:    # interrupts off (ESR pulses: a few us, the chunk
+                held[0] += CHUNK // 48                  # ended inside one): count the time after the pulse
+                continue
+            bd.us += CHUNK // 48 + held[0]
+            held[0] = 0
             if bd.us >= (bd.ms + 1) * 1000:
                 break
         # the ms tick catches up when one chunk advanced the us clock by more than 1 ms (cap.c's timer polls)
@@ -602,6 +692,7 @@ check('watchdog started (~2 s) and fed', r(0x40003004) == 4 and r(0x40003008) ==
       and 0xCCCC in bd.kr and bd.kr[-1] == 0xAAAA, bd.kr[-3:])
 check('relay off and HV boost off after init', bd.pin('B', 3) == 0 and bd.pin('F', 6) == 0)
 s = uart_text()
+boot_log = s
 check('UART banner + ADC ready', 'lcrp1-fw' in s and 'adc init 0' in s, s)
 
 # LCD init vs stock
@@ -658,10 +749,11 @@ if LOWBAT:                                              # second pass: battery d
     sys.exit(1 if fails else 0)
 
 # --- measurements: TEST runs a ComponentTester probing cycle on the modelled probe network
-def measure(dut, max_ms=8000, devs=(), caps=None):
+def measure(dut, max_ms=8000, devs=(), caps=None, esr=None):
     bd.dut = dict(dut)
     bd.devs = list(devs)
     bd.caps = dict(caps or {})
+    bd.esr = dict(esr or {})
     bd.v_nodes = None
     uart_text()
     ev0 = len(bd.events)
@@ -706,6 +798,9 @@ check('result screen stays (no ADC rows drawn over it)', bd.lcd.count(0xB47F, 60
       and bd.lcd.count(0xFFFF, 0, 128) < 50, (bd.lcd.count(0xB47F, 60, 92), bd.lcd.count(0xFFFF, 0, 128)))
 bd.dut = {}
 check('beep: buzzer channel enabled then disabled again', bd.reg.get(0x40013420) == 0x12, hex(bd.reg.get(0x40013420, 0)))
+n0 = len(buzz)
+measure({(0, 1): 1000})
+check('a test ends with a beep', len(buzz) > n0, buzz[n0:])
 
 # --- semiconductors (upstream semi.c on the device models)
 def result(out):
@@ -726,6 +821,23 @@ def cap_value(r):
     mult = {'p': 1e-12, 'n': 1e-9, 'u': 1e-6, 'µ': 1e-6, 'm': 1e-3}
     return num(t) * mult.get(t.rstrip('F')[-1], 1)
 
+def esr_tests():
+    """cap.c MeasureESR (the ESR model adds 0.2 Ohm of probe leads, which R0 takes off again). The noiseless
+    ADC gives about 0.18 Ohm per code of U_2 - U_1 (U_1 = 113 codes): the meter's noise dithers that."""
+    for pair, farads, ohms in (((0, 2), 22e-6, 1.0), ((1, 0), 470e-6, 0.3), ((0, 2), 1e-6, 4.7), ((1, 2), 100e-6, 100)):
+        out, _ = measure({}, max_ms=20000, caps={pair: farads}, esr={pair: ohms})
+        r = result(out)
+        e = [l for l in r if l.startswith('ESR')]
+        v = num(e[0].split()[1]) * (1e-3 if e[0].rstrip('\x7f').endswith('m') else 1) if e else None
+        want = ohms
+        check(f'ESR {ohms:g} Ohm of {farads:g} F reads {want:g}: {r}', v is not None and abs(v - want) <= 0.05 * want + 0.1,
+              [l for l in out.splitlines() if 'ESR' in l][-3:])
+    bd.caps, bd.esr = {}, {}
+
+if os.environ.get('ESR_ONLY'):
+    esr_tests()
+    sys.exit(0)
+
 for pair, farads, tol in (((0, 2), 100e-12, 0.05), ((1, 2), 10e-9, 0.03), ((0, 1), 1e-6, 0.03),
                           ((0, 2), 22e-6, 0.06), ((1, 0), 470e-6, 0.08)):   # LargeCap: CAP_FACTOR_LARGE not tuned yet
     out, _ = measure({}, max_ms=20000, caps={pair: farads})
@@ -737,6 +849,8 @@ for pair, farads, tol in (((0, 2), 100e-12, 0.05), ((1, 2), 10e-9, 0.03), ((0, 1
     if farads == 10e-9:
         bd.lcd.png(os.path.join(OUTDIR, 'screen_cap.png'))
 bd.caps = {}
+
+esr_tests()
 
 out, _ = measure({}, devs=[("D", 0, 2)])
 r = result(out)
@@ -771,6 +885,84 @@ vth = [l for l in r if l.startswith('Vth')]
 check('P-MOSFET G3 D1 S2: pinout, V_th about -1.6 V, body diode', r[:2] == ['P-MOSFET enh', '1D 2S 3G'] and vth
       and -1.9 < num(vth[0]) < -1.4 and any(l.startswith('D 1>2') for l in r), r)
 bd.devs = []
+
+# --- adjustment values: flash store + self-adjustment (#J)
+check('boot: no stored adjustment -> defaults', '#N defaults' in boot_log, boot_log[-300:])
+NV_ADDR = syms['NV']
+
+
+def nv_ram():
+    b = uc.mem_read(NV_ADDR, 12)
+    return dict(zip(('RiL', 'RiH', 'RZero', 'CapZero', 'RefOffset', 'CompOffset', 'Contrast', 'CheckSum'),
+                    struct.unpack('<HHHBbbBBx', bytes(b))))
+
+
+def nv_records():
+    recs = []
+    for i in range(32):
+        r = bytes(uc.mem_read(NV_PAGE + 16 * i, 16))
+        if r[:4] == b'P1NV':
+            recs.append(r[4:16])
+    return recs
+
+
+nv0 = nv_ram()
+recs0 = nv_records()
+check('after the cap tests: a record exactly when CompOffset moved by >= 3 mV',
+      all(abs((b[8] ^ 0x80) - (a[8] ^ 0x80)) >= 3 for a, b in zip([bytes(10)] + recs0, recs0)) and   # int8 CompOffset (not recs0 or recs0[-1][:10] == bytes(uc.mem_read(NV_ADDR, 10))),
+      (recs0, nv0))
+uart_text()
+def press_test():
+    bd.set_in('C', 13, 0); run_ms(80); bd.set_in('C', 13, 1); run_ms(50)
+
+
+def wait_for(text, out, ms=10000):
+    for _ in range(ms // 100):
+        if text in out:
+            break
+        run_ms(100); out += uart_text()
+    return out
+
+
+bd.dut, bd.devs, bd.caps, bd.v_nodes = {}, [], {}, None
+n_buzz = len(buzz)
+send(b'#J\n')
+out = wait_for('Short all probes', '')
+press_test()                                            # TEST before the wire is clamped
+out = wait_for('Not shorted', out)
+check('self-adjust: TEST without the short -> "Not shorted", no measurement', 'Not shorted' in out
+      and '#J R0' not in out, out[-300:])
+# probes shorted at one point, 0.15 ohm per lead: star -> triangle of 0.45 ohm = 0.3 ohm per pair
+bd.dut, bd.v_nodes = {(0, 1): 0.45, (0, 2): 0.45, (1, 2): 0.45}, None
+run_ms(3000); out += uart_text()
+check('self-adjust: shorted but no TEST yet -> waits', '#J R0' not in out, out[-200:])
+press_test()
+out = wait_for('Remove the short', out)
+r0 = [int(l.split()[3]) for l in out.splitlines() if l.startswith('#J R0 ')]
+bd.dut, bd.v_nodes = {}, None                            # short removed
+run_ms(500); out += uart_text()
+check('self-adjust: open but no TEST yet -> waits', 'Adjusting Ri' not in out, out[-200:])
+press_test()
+for _ in range(200):
+    run_ms(100); out += uart_text()
+    if '#J done' in out:
+        run_ms(500); out += uart_text()
+        break
+if os.environ.get('DUMP'):
+    print('\n'.join(l for l in out.splitlines() if l.startswith('#')))
+nv1 = nv_ram()
+check('self-adjust: silent (no buzzer register writes)', len(buzz) == n_buzz, buzz[n_buzz:])
+check(f'self-adjust: 15 R0 readings of the shorted probes ~ 0.3 ohm (noiseless ADC: 0.17 ohm steps): {r0[:3]}', len(r0) == 15
+      and all(15 <= v <= 45 for v in r0), out[-300:])
+check(f'self-adjust: all 4 values adjusted and saved: {nv1}', '#J done 4' in out and f'#N save slot {len(recs0)} ok' in out
+      and 30 <= nv1['CapZero'] <= 50 and 15 <= nv1['RZero'] <= 45 and nv1['RiL'] and nv1['RiH'], [l for l in out.splitlines() if l.startswith(('#J done', '#J C0', '#N save'))])
+bd.lcd.png(os.path.join(OUTDIR, 'screen_adjust.png'))
+recs = nv_records()
+check('flash: one record = NV in RAM, nothing else touched, page locked again',
+      recs == recs0 + [bytes(uc.mem_read(NV_ADDR, 12))] and not flash['errors'] and not flash['erases']
+      and flash['locked'] and bytes(uc.mem_read(0x0800FFD0, 0x30)) == STOCK_CAL, (recs, flash))
+out, _ = measure({})
+check('a test with unchanged values writes nothing', len(nv_records()) == len(recs0) + 1 and '#N save' not in out, out[-200:])
 
 # --- serial probe diagnostic with 1k on 1-2: probe 1 via Rl -> divider 1k / (680 + 1k)
 bd.dut = {(0, 1): 1000}
@@ -831,7 +1023,7 @@ bd.uart_rx += b'#?\n' * 30; run_ms(200)                  # unpaced burst: overru
 uart_text(); send(b'#?\n'); run_ms(50)
 check('reception recovers after an overrun', '#? ' in uart_text())
 uart_text(); send(b'#S15\n'); run_ms(50)
-check('#S sets the ADC sample time', '#S 15' in uart_text() and (bd.reg.get(0x40020810, 0) & 15) in (14, 15))
+_t = uart_text(); check('#S sets the ADC sample time', '#S 15' in _t and (bd.reg.get(0x40020810, 0) & 15) in (14, 15), repr(_t[-300:]))
 
 # --- sweep over sample times with 1M on 1-3
 bd.dut = {(0, 2): 1e6}
@@ -861,11 +1053,37 @@ uc.mem_write(RET, b'\xfe\xe7')
 t0 = struct.unpack('<I', uc.mem_read(G_MS, 4))[0]
 bd.reg[0x40001010] = 1
 uc.reg_write(UC_ARM_REG_SP, 0x20001F00)
-from unicorn.arm_const import UC_ARM_REG_LR
+from unicorn.arm_const import UC_ARM_REG_LR, UC_ARM_REG_R0
 uc.reg_write(UC_ARM_REG_LR, RET | 1)
 uc.emu_start(syms['TIM6_IRQHandler'] | 1, RET, count=1000)
 t1 = struct.unpack('<I', uc.mem_read(G_MS, 4))[0]
 check('TIM6 ISR: g_ms + 1 and update flag cleared', t1 == t0 + 1 and bd.reg.get(0x40001010) == 0, (t0, t1))
+
+# --- flash store: 40 saves wrap the 32-slot page once; nv_load returns the last one
+def call(fn, count=2000000):
+    uc.reg_write(UC_ARM_REG_SP, 0x20001F00)
+    uc.reg_write(UC_ARM_REG_LR, RET | 1)
+    uc.emu_start(syms[fn] | 1, RET, count=count)
+    return uc.reg_read(UC_ARM_REG_R0)
+
+
+nv_base = bytearray(uc.mem_read(NV_ADDR, 12))
+oks = []
+for i in range(40):
+    b = bytearray(nv_base); b[7] = i                    # RefOffset = i
+    uc.mem_write(NV_ADDR, bytes(b))
+    oks.append(call('nv_save'))
+recs = nv_records()
+n_wrap = (len(recs0) + 1 + 39) - 32                     # records before + adjust + 39 changed saves, 32 slots
+check(f'40 saves (#0 = unchanged: no write): all ok, one erase of the NV page, {n_wrap} records after the wrap, no flash errors',
+      all(oks) and flash['erases'] == [NV_PAGE] and len(recs) == n_wrap and not flash['errors']
+      and bytes(uc.mem_read(0x0800FFD0, 0x30)) == STOCK_CAL, (oks, flash, len(recs)))
+uc.mem_write(NV_ADDR, b'\0' * 12)
+loaded = call('nv_load')
+check('nv_load: the newest record (RefOffset 39)', loaded == 1 and nv_ram()['RefOffset'] == 39, nv_ram())
+uc.mem_write(NV_PAGE + 16 * (n_wrap - 1) + 14, b'\x00')              # corrupt the newest record's checksum
+call('nv_load')
+check('nv_load: skips a record with a bad checksum', nv_ram()['RefOffset'] == 38, nv_ram())
 
 print(f'{len(fails)} failed' if fails else 'all passed', '- screens in', OUTDIR)
 sys.exit(1 if fails else 0)

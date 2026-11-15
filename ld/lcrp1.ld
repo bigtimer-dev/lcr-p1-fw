@@ -4,7 +4,7 @@
  * record (0x0800FFD0). RAM limited to 8 KB until 16 KB is confirmed on hardware.
  */
 MEMORY {
-  FLASH (rx) : ORIGIN = 0x08001800, LENGTH = 0xE400
+  FLASH (rx) : ORIGIN = 0x08001800, LENGTH = 0xE000
   RAM (rwx)  : ORIGIN = 0x20000000, LENGTH = 8K
 }
 /* The FNIRSI bootloader only starts an app whose initial SP satisfies (SP & 0x0FFFFFFF) < 0x2000,

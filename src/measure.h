@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 void measure_init(void);            /* after board/ADC init: load adjustment defaults, set Cfg */
+int measure_prepare(void);          /* refs, discharge, drive level (relay must be open); 0 = error */
 int measure_run(void);              /* one probing cycle (ComponentTester sequence); returns Check.Found */
 uint16_t measure_vcc(void);         /* probe drive level (mV) measured in the last cycle */
 uint16_t measure_adc_fs(void);      /* ADC full scale (mV) from the 2.5 V reference */

@@ -12,6 +12,7 @@
 #define ADC_CH_BAT    8     /* PB0: battery divider (x2) */
 
 extern uint16_t adc_vref_mv;            /* ADC full scale in mV (stock default 4940) */
+void adc_select(unsigned ch, unsigned st);     /* channel + sample time code for the next conversions */
 uint32_t adc_raw_st(unsigned ch, unsigned n, unsigned st);   /* adc_raw with a given sample time code */
 extern uint8_t adc_sample_code;         /* sample time code 0..15 */
 
@@ -19,5 +20,6 @@ int adc_init(void);                     /* 0 = ready */
 uint32_t adc_raw(unsigned ch, unsigned n);      /* sum of n conversions (12 bit each) */
 uint32_t adc_mv(unsigned ch, unsigned n);       /* average in mV */
 uint32_t battery_mv(void);
+void adc_timing_scan(unsigned st);      /* ESR groundwork: sample instant after start (serial #E) */
 
 #endif

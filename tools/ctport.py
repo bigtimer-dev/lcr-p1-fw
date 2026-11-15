@@ -36,8 +36,6 @@ EDITS = [
     ('#define BAT_OFFSET       290\n', '#define BAT_OFFSET       0\n'),
     ('#define BAT_WEAK         7400\n', '#define BAT_WEAK         3500              /* LCR-P1: 1S Li-ion */\n'),
     ('#define BAT_LOW          6400 \n', '#define BAT_LOW          3300\n'),
-    ('#define SW_ESR                 /* new method starting at 10 nF */\n',
-     '//#define SW_ESR               /* LCR-P1: not ported yet (AVR ADC timing) */\n'),
     ('#define UREF_VCC         5001\n', '#define UREF_VCC         5020              /* LCR-P1: measured via 2.5V ref */\n'),
     ('#if defined(__AVR_ATmega328__)\n  #include "config_328.h"\n',
      '#if defined(LCRP1)\n  #include "config_lcrp1.h"\n#elif defined(__AVR_ATmega328__)\n  #include "config_328.h"\n'),
@@ -48,6 +46,55 @@ EDITS = [
 # The start marker must be unique, or with n given its n-th occurrence (0 = first) is used;
 # the end marker is its first occurrence after the start.
 PATCHES = [
+    ('probes.c',
+     '    else                                /* go for another round */\n',
+     '      MilliSleep(50);                   /* wait for 50ms */\n    }\n',
+     '    else if (!(Flags & (1 << ID)))      /* LCR-P1: wait only while this probe is still charged */\n'
+     '    {                                   /* (upstream slept 50 ms after every probe that was already\n'
+     '                                           discharged too: 50-100 ms per call, 10+ calls per test) */\n'
+     '      wdt_reset();                      /* reset watchdog */\n'
+     '      MilliSleep(U_c < 50 ? 10 : 50);   /* LCR-P1: 10 ms steps for the last few mV */\n    }\n', 0),
+    ('cap.c',
+     '    Value = (uint32_t)(NV.RiL * 10);    /* RiL in 0.01 Ohms */\n',
+     '    U_1 = (uint16_t)Value;              /* raw ESR (0.01 Ohms) */\n',
+     '    /* LCR-P1: exact divider Vcc - (Rl + RiH) - DUT - RiL - Gnd instead of RiL * U_DUT / U_RiL, which\n'
+     '       assumes the pulse current does not depend on the DUT (a 2k in series read 504 Ohms):\n'
+     '       R = (Rl + RiH) * (U2 / (Vcc - U2) - U1 / (Vcc - U1)) = (Rl + RiH) * Vs * dS / ((Vs - S2) (Vs - S1))\n'
+     '       with sums S (Sum_2 is already S2 - S1) and Vs = Vcc as the same sum of 510 ADC codes */\n'
+     '    {\n'
+     '      uint64_t Vs = (uint64_t)Cfg.Vcc * 4096 * 510 / ct_adc_fs_mv;\n'
+     '      uint64_t S2 = (uint64_t)Sum_2 + Sum_1, Rt = (uint64_t)R_LOW * 100 + NV.RiH * 10;  /* 0.01 Ohm */\n'
+     '      if (S2 + 510 >= Vs) return ESR;    /* pulse at the rail: open or far too high */\n'
+     '      uint64_t v = Rt * Vs * Sum_2 / ((Vs - S2) * (Vs - Sum_1));\n'
+     '      if (v >= UINT16_MAX) return ESR;   /* above 655 Ohms: not an ESR */\n'
+     '      U_1 = (uint16_t)v;                 /* raw ESR (0.01 Ohms) */\n'
+     '    }\n'
+     '    (void)Value;\n', 0),
+    ('cap.c',
+     'uint8_t SetUpDelayTimer(uint8_t Cycles)\n',
+     '  TIFR0 = (1 << OCF0A);            /* clear flag */\n}\n',
+     '/* LCR-P1: no Timer0 delays: ct_esr_sums() (src/ct_hal.c) times the pulses */\n'),
+    ('cap.c',
+     '  Probe1 = Probes.Ch_1;                 /* ADC MUX for probe-1 */\n',
+     '  /* probes: reset to safe mode */\n',
+     '  /* LCR-P1: the pulse loop below with GPIO mode writes, sample code 0 and a reverse pre-charge of the\n'
+     '     pulse length (src/ct_hal.c ct_esr_sums()); same sums: Sum_1 = U_1 + U_3, Sum_2 = U_2 + U_4 */\n'
+     '  (void)Probe1; (void)Probe2; (void)Bits; (void)U_3; (void)U_4;\n'
+     '  if (!ct_esr_sums(Probes.ID_1, Probes.ID_2, &Sum_1, &Sum_2)) return ESR;\n'
+     '  CT_DBG("#C ESR %u-%u Sum_1=%u Sum_2=%u RiL=%u R0=%u\\r\\n", Probes.ID_1 + 1, Probes.ID_2 + 1,\n'
+     '         (unsigned)Sum_1, (unsigned)Sum_2, (unsigned)NV.RiL, (unsigned)NV.RZero);\n'
+     '  n = 0;\n'
+     '  /* probes: reset to safe mode */\n', 0),
+    ('cap.c',
+     '    U_Cap = ReadU(Probes.Ch_1);         /* get voltage */\n',
+     '    U_Cap = ReadU(Probes.Ch_1);         /* get voltage */\n',
+     '    /* LCR-P1: an open probe node (about 40 pF) loses its charge within a few ms (it settles at about\n'
+     '       0.8 V), so the averaged ReadU() lands around the 1300 mV "small cap" limit and an empty socket\n'
+     '       could give a value from one pulse. A fast sample right after the first pulse sees the real level;\n'
+     '       a real cap reads the same either way. */\n'
+     '    TempInt = (uint16_t)((uint32_t)ct_adc_poll(Probes.Ch_1) * ct_adc_fs_mv / 4096);\n'
+     '    U_Cap = ReadU(Probes.Ch_1);         /* get voltage */\n'
+     '    if ((Pulses == 1) && (TempInt > U_Cap)) U_Cap = TempInt;\n'),
     ('semi.c',
      '  if (U_1 < 10)             /* no conduction */\n',
      '  if (U_1 < 10)             /* no conduction */\n',

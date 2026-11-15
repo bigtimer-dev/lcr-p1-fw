@@ -28,7 +28,7 @@ $(BUILD)/%.o: src/%.c src/*.h ct/*.h ct/ported/*.h  | $(BUILD)
 	$(CC) $(CFLAGS) $(CT_INC) -c $< -o $@
 
 # LCR-P1 files built on the upstream headers: upstream's warning level
-$(BUILD)/ct_glue.o $(BUILD)/measure.o: CFLAGS = $(CT_CFLAGS)
+$(BUILD)/ct_glue.o $(BUILD)/measure.o $(BUILD)/adjust.o: CFLAGS = $(CT_CFLAGS)
 $(BUILD)/libc.o: CFLAGS += -fno-tree-loop-distribute-patterns -fno-builtin
 
 $(BUILD)/ct_%.o: ct/ported/%.c ct/ported/*.h ct/*.h src/ct_hal.h  | $(BUILD)

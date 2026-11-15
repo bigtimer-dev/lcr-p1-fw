@@ -6,6 +6,7 @@
 #include "adc.h"
 #include "board.h"
 #include "hw.h"
+#include "uart.h"
 
 static uint8_t r_ddr, r_port, a_ddr, a_port;
 
@@ -53,9 +54,21 @@ unsigned ct_adc_channel(uint8_t channel)
     return channel < 6 ? adc_ch[channel] : 17;
 }
 
+#ifdef CT_DEBUG
+struct ct_prof ct_prof;                                 /* where the time of a test goes (#T lines) */
+#endif
+
 uint32_t ct_adc_read(uint8_t channel, uint8_t samples)
 {
+#ifdef CT_DEBUG
+    uint16_t t0 = (uint16_t)R32(0x40000824u);
+    uint32_t v = adc_raw(ct_adc_channel(channel), samples);
+    ct_prof.adc_us += (uint16_t)((uint16_t)R32(0x40000824u) - t0);
+    ct_prof.n_adc++;
+    return v;
+#else
     return adc_raw(ct_adc_channel(channel), samples);
+#endif
 }
 
 /* Fast level poll of a low-impedance node (e.g. a drain on Rl) for busy loops: short sample time */
@@ -93,13 +106,18 @@ void ct_wait_us(uint16_t us)
 {
     uint16_t t0 = (uint16_t)T3_CNT;
     while ((uint16_t)((uint16_t)T3_CNT - t0) < us)
-        ;
+        if (us >= 100)
+            uart_poll();                                /* long waits: keep serial input (short ones are timing) */
 }
 
 /* On the 1 MHz timer: delay_ms() counts 1 kHz tick edges, so its first ms is anywhere from 0 to 1 ms long,
  * which made cap.c's 1 ms charging pulses (4.7-47 uF) up to 2x short and the capacitance that much too high. */
 void MilliSleep(uint16_t ms)
 {
+#ifdef CT_DEBUG
+    ct_prof.sleep_ms += ms;
+    ct_prof.n_sleep++;
+#endif
     while (ms--) {
         ct_wait_us(1000);
         wdt_feed();
@@ -178,6 +196,100 @@ uint32_t ct_cap_charge(uint8_t channel, uint8_t ddr, uint16_t max_ovf)
     CMP_INVREF = 0;
     relay_update();
     return ticks | ovf << 16;
+}
+
+/* ---- ESR (cap.c MeasureESR) ----
+ * Upstream samples the voltage at the cap in the middle of a 2-4 us current pulse via Rl, timed to the AVR
+ * ADC clock. Here: sample code 0 ends its sampling ESR_KS delay-loop runs after the start command (measured
+ * with #E on the meter: 18; codes 1-4: 22/31/41/55), so the measuring pulse is switched off right then.
+ * Each measuring pulse follows a reverse pre-charge of the same length, so the cap's own voltage is back
+ * at zero at the sampling point (upstream: the negative half-pulse); forward and reverse alternate.
+ * Pulses are GPIO mode writes only (levels set before), with interrupts off. */
+#define ESR_ST 0
+uint8_t ct_esr_ks = 18, ct_esr_kp = 19;          /* sampling end / pre-charge length (delay-loop runs) */
+
+static void esr_delay(uint32_t n)
+{
+    __asm volatile(".syntax unified\n1: subs %0, %0, #1\n bne 1b" : "+l"(n) : : "cc");
+}
+
+static void modes(uint32_t *a, uint32_t *b, const struct vpin *x, const struct vpin *y)
+{
+    const struct vpin *p[2] = {x, y};
+    for (int i = 0; i < 2; i++) {
+        uint32_t *m = p[i]->port == GPIOA ? a : b;
+        *m = (*m & ~(3u << 2 * p[i]->pin)) | (uint32_t)MODE_OUT << 2 * p[i]->pin;
+    }
+}
+
+/* The end-of-conversion flag is no help here (still set from earlier conversions: the "one conversion
+   late" of adc.c), but 30 us after the start the data register holds this conversion (#E on the meter) */
+static uint32_t adc_wait(void)
+{
+    ct_wait_us(30);
+    return ADC_DAT & 0xFFF;
+}
+
+uint8_t ct_esr_sums(uint8_t id1, uint8_t id2, uint32_t *sum1, uint32_t *sum2)
+{
+    const struct vpin *p1 = &a_pins[id1], *p2 = &a_pins[id2], *l1 = &r_pins[2 * id1], *l2 = &r_pins[2 * id2];
+    uint8_t ch1 = adc_ch[id1], ch2 = adc_ch[id2];
+    R_DDR_set(0);
+    R_PORT_set(0);
+    ADC_PORT_set(0);
+    ADC_DDR_set(0);                                     /* all probe pins analog, relay open */
+    uint32_t a0 = GP_MODE(GPIOA), b0 = GP_MODE(GPIOB);
+    GP_BSC(GPIOA) = 1u << (p1->pin + 16) | 1u << (p2->pin + 16);   /* levels: probe pins low, Rl high */
+    GP_BSC(l1->port) = 1u << l1->pin;
+    GP_BSC(l2->port) = 1u << l2->pin;
+    uint32_t fa = a0, fb = b0, ra = a0, rb = b0, sa1 = a0, sb1 = b0, sa3 = a0, sb3 = b0;
+    modes(&fa, &fb, p1, l2);                            /* forward: Gnd -- probe-1 / probe-2 -- Rl -- Vcc */
+    modes(&ra, &rb, p2, l1);                            /* reverse: Gnd -- probe-2 / probe-1 -- Rl -- Vcc */
+    modes(&sa1, &sb1, p1, l1);                          /* U at RiL of probe-1 (probe-2 HiZ) */
+    modes(&sa3, &sb3, p2, l2);                          /* U at RiL of probe-2 (probe-1 HiZ) */
+    uint32_t s1 = 1, s2 = 1, ks = ct_esr_ks, kp = ct_esr_kp;
+    uint8_t ok = 1;
+    for (unsigned n = 0; n < 255; n++) {
+        uint32_t u[4];
+        for (int i = 0; i < 4; i++) {
+            int fwd = !(i & 2);
+            adc_select(i == 0 || i == 3 ? ch1 : ch2, ESR_ST);
+            if (!(i & 1)) {                             /* U_1 / U_3: static, no current through the DUT */
+                GP_MODE(GPIOA) = fwd ? sa1 : sa3;
+                GP_MODE(GPIOB) = fwd ? sb1 : sb3;
+                ct_wait_us(5);
+                ADC_CR2 |= 0x500000;
+                u[i] = adc_wait();
+                GP_MODE(GPIOA) = a0;
+                GP_MODE(GPIOB) = b0;
+            } else {                                    /* U_2 / U_4: pre-charge, then the measuring pulse */
+                uint32_t pa = fwd ? ra : fa, pb = fwd ? rb : fb, ma = fwd ? fa : ra, mb = fwd ? fb : rb;
+                __asm volatile("cpsid i");
+                GP_MODE(GPIOA) = pa;
+                GP_MODE(GPIOB) = pb;
+                esr_delay(kp);
+                GP_MODE(GPIOA) = ma;
+                GP_MODE(GPIOB) = mb;
+                ADC_CR2 |= 0x500000;
+                esr_delay(ks);
+                GP_MODE(GPIOA) = a0;
+                GP_MODE(GPIOB) = b0;
+                __asm volatile("cpsie i");
+                u[i] = adc_wait();
+            }
+        }
+        s1 += u[0] + u[2];
+        s2 += u[1] + u[3];
+        if (!(n & 31))
+            wdt_feed();
+    }
+    GP_MODE(GPIOA) = a0;
+    GP_MODE(GPIOB) = b0;
+    R_PORT_set(0);                                      /* Rl levels back to low (pins still analog) */
+    ADC_PORT_set(0);
+    *sum1 = s1;
+    *sum2 = s2;
+    return ok;
 }
 
 void ct_hal_init(void)

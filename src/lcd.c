@@ -5,6 +5,7 @@
 #include "lcd.h"
 #include "board.h"
 #include "hw.h"
+#include "uart.h"
 
 #define X_OFS 1     /* panel RAM offset in this orientation (stock: CASET 1..128, RASET 2..129) */
 #define Y_OFS 2
@@ -124,6 +125,8 @@ void lcd_fill(int x, int y, int w, int h, uint16_t c)
     window(x, y, w, h);
     gpio_set(PIN_LCD_CS, 0);
     for (int n = w * h; n; n--) {
+        if (!(n & 31))
+            uart_poll();                        /* drawing takes ms: keep serial input (a byte per 87 us) */
         spi_byte(c >> 8);
         spi_byte(c);
     }
@@ -140,12 +143,14 @@ static int glyph(int x, int y, unsigned ch, const struct font *f, uint16_t fg, u
     const uint8_t *g = f->bits + (ch - f->first) * f->h * f->bpr;
     window(x, y, f->w, f->h);
     gpio_set(PIN_LCD_CS, 0);
-    for (int r = 0; r < f->h; r++, g += f->bpr)
+    for (int r = 0; r < f->h; r++, g += f->bpr) {
+        uart_poll();
         for (int c = 0; c < f->w; c++) {
             uint16_t px = g[c >> 3] & (0x80 >> (c & 7)) ? fg : bg;
             spi_byte(px >> 8);
             spi_byte(px);
         }
+    }
     spi_wait_idle();
     gpio_set(PIN_LCD_CS, 1);
     return f->w;

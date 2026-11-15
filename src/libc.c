@@ -48,3 +48,12 @@ int strcmp(const char *a, const char *b)
         a++, b++;
     return (unsigned char)*a - (unsigned char)*b;
 }
+
+int memcmp(const void *a, const void *b, size_t n)
+{
+    const unsigned char *p = a, *q = b;
+    for (; n; n--, p++, q++)
+        if (*p != *q)
+            return *p - *q;
+    return 0;
+}
