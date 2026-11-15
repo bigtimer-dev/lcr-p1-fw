@@ -50,6 +50,7 @@ class Board:
         self.ms = 0
         self.first_pa8 = None
         self.writes = 0
+        self.kr = []
 
     def pin(self, port, n):
         return self.out[port] >> n & 1
@@ -59,6 +60,8 @@ class Board:
 
     def write(self, a, v):
         self.writes += 1
+        if a == 0x40003000:
+            self.kr.append(v)
         self.reg[a] = v
         base, off = a & ~0x3FF, a & 0x3FF
         if base in PORTS and off in (0x14, 0x18, 0x28):
@@ -179,8 +182,15 @@ def on_r(uc, acc, a, sz, v, _):
 
 uc.hook_add(UC_HOOK_MEM_WRITE, on_w, begin=0x40000000, end=0x4002FFFF)
 uc.hook_add(UC_HOOK_MEM_READ, on_r, begin=0x40000000, end=0x4002FFFF)
+uc.hook_add(UC_HOOK_MEM_WRITE, on_w, begin=0xE000E000, end=0xE000EFFF)
 
 sp, rv = struct.unpack_from('<II', img, 0)
+# FNIRSI bootloader (dumped 2026-11-14, jump routine 0x08000190): starts the app only if
+# (SP & 0x0FFFFFFF) < 0x2000, otherwise it stays in update mode
+check('bootloader would start the image: initial SP < 0x20002000', (sp & 0x0FFFFFFF) < 0x2000, hex(sp))
+check('reset vector inside the image (thumb)', rv & 1 and BASE <= rv < BASE + len(img), hex(rv))
+vec = struct.unpack_from('<48I', img, 0)
+check('IRQ20 vector -> TIM6_IRQHandler', vec[36] == syms['TIM6_IRQHandler'] | 1, hex(vec[36]))
 uc.reg_write(UC_ARM_REG_SP, sp)
 pc = [rv]
 CHUNK = 3000                                            # instructions per emulated millisecond
@@ -214,6 +224,13 @@ run_ms(399)
 check('clock: PLL on, system clock = PLL, flash 2 wait states',
       bd.reg.get(0x40021000, 0) >> 24 & 1 and bd.reg.get(0x40021004, 0) & 3 == 2
       and bd.reg.get(0x40022000, 0) & 3 == 2, [hex(bd.reg.get(a, 0)) for a in (0x40021000, 0x40021004, 0x40022000)])
+r = bd.reg.get
+check('tick timer TIM6: 48 MHz / 48 / 1000, update IRQ on, running',
+      (r(0x40001028), r(0x4000102C), r(0x4000100C), r(0x40001000, 0) & 1) == (47, 999, 1, 1),
+      [r(a) for a in (0x40001028, 0x4000102C, 0x4000100C, 0x40001000)])
+check('NVIC: IRQ20 enabled; SysTick interrupt not used', r(0xE000E100, 0) >> 20 & 1 and not r(0xE000E010, 0) & 2)
+check('watchdog started (~2 s) and fed', r(0x40003004) == 4 and r(0x40003008) == 1250
+      and 0xCCCC in bd.kr and bd.kr[-1] == 0xAAAA, bd.kr[-3:])
 check('relay off and HV boost off after init', bd.pin('B', 3) == 0 and bd.pin('F', 6) == 0)
 check('UART banner', 'lcrp1-fw' in uart_text())
 
@@ -292,6 +309,18 @@ check('long TEST: relay released, PA8 cleared, logged', bd.pin('A', 8) == 0 and 
       and 'power off (key)' in s, s)
 bd.lcd.png(os.path.join(OUTDIR, 'screen_off.png'))
 check('HV boost pin never set', not any(e == 'PF6=1' for _, e in bd.events))
+
+# --- tick ISR: clears the update flag and counts
+RET = 0x08000100
+uc.mem_write(RET, b'\xfe\xe7')
+t0 = struct.unpack('<I', uc.mem_read(G_MS, 4))[0]
+bd.reg[0x40001010] = 1
+uc.reg_write(UC_ARM_REG_SP, 0x20001F00)
+from unicorn.arm_const import UC_ARM_REG_LR
+uc.reg_write(UC_ARM_REG_LR, RET | 1)
+uc.emu_start(syms['TIM6_IRQHandler'] | 1, RET, count=1000)
+t1 = struct.unpack('<I', uc.mem_read(G_MS, 4))[0]
+check('TIM6 ISR: g_ms + 1 and update flag cleared', t1 == t0 + 1 and bd.reg.get(0x40001010) == 0, (t0, t1))
 
 print(f'{len(fails)} failed' if fails else 'all passed', '- screens in', OUTDIR)
 sys.exit(1 if fails else 0)

@@ -6,9 +6,12 @@
 
 volatile uint32_t g_ms;
 
-void SysTick_Handler(void)
+void TIM6_IRQHandler(void)
 {
-    g_ms++;
+    if (T6_SR & 1) {
+        T6_SR = 0;
+        g_ms++;
+    }
 }
 
 /* Same steps as the stock SystemInit: HSI, flash latency 2 + prefetch, PLL (HSI) -> 48 MHz,
@@ -83,14 +86,28 @@ void power_off(void)
 {
     gpio_set(PIN_POWER, 0);
     for (;;)
-        ;                                       /* power fades (or USB keeps us here) */
+        wdt_feed();                             /* power fades; no watchdog reboot meanwhile */
+}
+
+void wdt_start(void)
+{
+    IWDG_KR = 0x5555;
+    IWDG_PR = 4;                                /* LSI / 64 */
+    IWDG_RLR = 1250;                            /* ~2 s at 40 kHz */
+    IWDG_KR = 0xAAAA;
+    IWDG_KR = 0xCCCC;
+}
+
+void wdt_feed(void)
+{
+    IWDG_KR = 0xAAAA;
 }
 
 void delay_ms(uint32_t ms)
 {
     uint32_t t = g_ms;
     while (g_ms - t < ms)
-        ;
+        wdt_feed();
 }
 
 void relay(int on)
@@ -139,9 +156,15 @@ void board_init(void)
     RCC_APB2EN |= APB2_AFIO | APB2_GPIOA | APB2_GPIOB | APB2_GPIOC | APB2_GPIOF | APB2_SPI |
                   APB2_TIM1 | APB2_UART1;
 
-    SYST_RVR = 48000 - 1;                       /* 1 ms at 48 MHz core clock */
-    SYST_CVR = 0;
-    SYST_CSR = 7;                               /* core clock, interrupt, enable */
+    RCC_APB1EN |= APB1_TIM6;                    /* 1 kHz tick: 48 MHz / 48 / 1000 */
+    T6_CR1 = 0;
+    T6_PSC = 47;
+    T6_ARR = 999;
+    T6_EGR = 1;
+    T6_SR = 0;
+    T6_DIER = 1;
+    T6_CR1 = 1;
+    NVIC_ISER = 1u << IRQ_TIM6;
 
     gpio_set(PIN_RELAY, 0);                     /* relay off: probes shorted (safe) */
     gpio_mode(PIN_RELAY, MODE_OUT);

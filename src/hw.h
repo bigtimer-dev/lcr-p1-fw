@@ -78,6 +78,24 @@ enum { PULL_NONE, PULL_UP, PULL_DOWN };
 #define T1_CCR2    R32(TIM1 + 0x38)
 #define T1_BDTR    R32(TIM1 + 0x44)
 
+/* TIM6: 1 kHz tick on IRQ20 (the stock firmware's tick timer; reaches the app through the bootloader's
+   vector remap, unlike SysTick which was never tested) */
+#define TIM6       0x40001000u
+#define T6_CR1     R32(TIM6 + 0x00)
+#define T6_DIER    R32(TIM6 + 0x0C)
+#define T6_SR      R32(TIM6 + 0x10)
+#define T6_EGR     R32(TIM6 + 0x14)
+#define T6_PSC     R32(TIM6 + 0x28)
+#define T6_ARR     R32(TIM6 + 0x2C)
+#define APB1_TIM6  0x0010u
+#define IRQ_TIM6   20
+#define NVIC_ISER  R32(0xE000E100u)
+
+/* IWDG (independent watchdog, LSI ~40 kHz): a hang resets the chip, which releases the power latch */
+#define IWDG_KR    R32(0x40003000u)   /* 0xCCCC start, 0xAAAA reload, 0x5555 unlock PR/RLR */
+#define IWDG_PR    R32(0x40003004u)
+#define IWDG_RLR   R32(0x40003008u)
+
 /* SysTick */
 #define SYST_CSR   R32(0xE000E010u)
 #define SYST_RVR   R32(0xE000E014u)

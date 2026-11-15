@@ -7,7 +7,9 @@ MEMORY {
   FLASH (rx) : ORIGIN = 0x08001800, LENGTH = 0xE400
   RAM (rwx)  : ORIGIN = 0x20000000, LENGTH = 8K
 }
-_estack = ORIGIN(RAM) + LENGTH(RAM);
+/* The FNIRSI bootloader only starts an app whose initial SP satisfies (SP & 0x0FFFFFFF) < 0x2000,
+   i.e. SP <= 0x20001FFF (it stays in update mode otherwise, holding the power latch). */
+_estack = 0x20001FF8;
 ENTRY(Reset_Handler)
 SECTIONS {
   .text : {
@@ -29,5 +31,6 @@ SECTIONS {
     _ebss = .;
   } > RAM
   ASSERT(_ebss + 1024 <= _estack, "less than 1 KB left for the stack")
+  ASSERT((_estack & 0x0FFFFFFF) < 0x2000, "bootloader refuses an initial SP >= 0x20002000")
   /DISCARD/ : { *(.ARM.exidx*) *(.comment) *(.ARM.attributes) }
 }

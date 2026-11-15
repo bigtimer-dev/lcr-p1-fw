@@ -17,6 +17,8 @@ void gpio_set(uint32_t port, unsigned pin, int on);
 int gpio_get(uint32_t port, unsigned pin);
 
 void delay_ms(uint32_t ms);
+void wdt_start(void);                  /* ~2 s; a hung firmware resets and the meter switches off */
+void wdt_feed(void);
 void relay(int on);
 void beep(unsigned ms);                 /* non-blocking; beep_poll() ends it */
 void beep_poll(void);

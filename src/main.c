@@ -36,6 +36,7 @@ int main(void)
     char buf[16];
 
     for (;;) {
+        wdt_feed();
         beep_poll();
         int ev = key_poll();
         if (ev != KEY_NONE)
