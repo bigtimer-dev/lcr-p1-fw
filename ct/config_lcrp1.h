@@ -11,6 +11,8 @@
 
 #include "ct_hal.h"
 
+extern uint16_t ct_adc_fs_mv;            /* ADC full scale in mV (src/ct_glue.c) */
+
 /* debug output inserted by tools/ctport.py (build with make CT_DEBUG=1) */
 #ifdef CT_DEBUG
   void uprintf(const char *fmt, ...);

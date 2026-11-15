@@ -84,3 +84,22 @@ int8_t CmpValue(uint32_t Value1, int8_t Scale1, uint32_t Value2, int8_t Scale2)
 
   return Flag;
 }
+
+/* from adjust.c */
+uint8_t GetOffsetIndex(uint8_t Probe1, uint8_t Probe2)
+{
+  uint8_t           Index;
+
+  /*
+   *  - use sum of probe IDs (order doesn't matter):
+   *    probes #1 & #2: 0 + 1 = 1  -> index: 0
+   *    probes #1 & #3: 0 + 2 = 2  -> index: 1
+   *    probes #2 & #3: 1 + 2 = 3  -> index: 2
+   *  - index = (sum of probe IDs) - 1
+   */
+
+  Index = Probe1 + Probe2;
+  Index--;
+
+  return Index;
+}

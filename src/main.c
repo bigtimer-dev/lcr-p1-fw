@@ -11,7 +11,7 @@
 #include "lcd.h"
 #include "uart.h"
 
-#define VERSION   "0.3"
+#define VERSION   "0.4"
 #define IDLE_OFF_MS (3u * 60 * 1000)
 #define LOWBAT_MV 3300          /* as stock: switch off at or below this */
 
@@ -134,8 +134,16 @@ static void show_result(int found, uint32_t ms)
             uprintf("#R R %u-%u %u e%d\r\n", a, b, value, scale);
         }
     } else {
-        lcd_text(4, 56, found == 1 ? "error" : "no component", &font16, C_WHITE, C_BLACK);
-        lcd_text(4, 76, "(R only so far)", &font16, C_DIM, C_BLACK);
+        const struct mres *r = measure_result();
+        lcd_text(4, 48, r->title, &font16, found >= 20 ? C_LABEL : C_WHITE, C_BLACK);
+        uprintf("#R %s\r\n", r->title);
+        for (int i = 0; i < r->n; i++) {
+            if (i < 4)                                  /* rows 64..112: the 4th replaces the Vcc line */
+                lcd_text(4, 64 + 16 * i, r->line[i], &font16, i ? C_WHITE : C_ACCENT, C_BLACK);
+            uprintf("#R   %s\r\n", r->line[i]);
+        }
+        if (r->n >= 4)
+            return;
     }
     fmt(line, sizeof line, "Vcc %u.%03uV%s", measure_vcc() / 1000, measure_vcc() % 1000, measure_ref_ok() ? "" : "?");
     lcd_text(4, 112, line, &font16, C_DIM, C_BLACK);
@@ -145,7 +153,7 @@ int main(void)
 {
     board_init();
     uart_init();
-    uprintf("\r\nlcrp1-fw " VERSION " (ADC explorer)\r\n");
+    uprintf("\r\nlcrp1-fw " VERSION "\r\n");
     lcd_init();
     int adc_ok = adc_init();
     uprintf("adc init %d\r\n", adc_ok);

@@ -8,6 +8,7 @@
 #include "variables.h"
 #include "functions.h"
 #include "uart.h"
+#include "font.h"
 
 void measure_init(void)
 {
@@ -21,7 +22,6 @@ void measure_init(void)
     ADC_DDR_set(1 << TP_REF);                   /* relay off: probes shorted (safe) */
 }
 
-extern uint16_t ct_adc_fs_mv;
 
 /* main.c CheckVoltageRefs(), HW_REF25 part: ADC full scale from the 2.5 V reference */
 static void check_refs(void)
@@ -62,6 +62,11 @@ static void check_drive(void)
         Cfg.Vcc = max;
 }
 
+static struct mres result;
+static void describe(struct mres *r);
+
+const struct mres *measure_result(void) { return &result; }
+
 int measure_run(void)
 {
     Check.Found = COMP_NONE;
@@ -92,6 +97,7 @@ int measure_run(void)
         CheckProbes(PROBE_3, PROBE_2, PROBE_1);
         CheckAlternatives();
     }
+    describe(&result);                          /* may measure more (diode leakage): before the relay */
     R_DDR_set(0);
     R_PORT_set(0);
     ADC_PORT_set(0);
@@ -141,4 +147,161 @@ void measure_format(char *out, int size, uint32_t value, int8_t scale, const cha
     while (*unit && o < out + size - 1)
         *o++ = *unit++;
     *o = 0;
+}
+
+/* ---- result text (after upstream main.c Show_Diode / Show_BJT / Show_FET, condensed for 16 columns) ---- */
+
+static char *add(struct mres *r)
+{
+    return r->n < MRES_LINES ? r->line[r->n++] : r->line[MRES_LINES - 1];
+}
+
+static void mv(char *o, int size, int32_t u)          /* "0.652V", "-2.10V" */
+{
+    const char *sign = u < 0 ? "-" : "";
+    if (u < 0) u = -u;
+    fmt(o, size, "%s%u.%03uV", sign, (unsigned)u / 1000, (unsigned)u % 1000);
+}
+
+static void pinout(struct mres *r)                    /* "1B 2C 3E" */
+{
+    char d[3] = {'?', '?', '?'};
+    SemiPinDesignators();                               /* Semi.DesA..C for Check.Found (upstream main.c does this) */
+    d[Semi.A] = Semi.DesA;
+    d[Semi.B] = Semi.DesB;
+    d[Semi.C] = Semi.DesC;
+    fmt(add(r), 17, "1%c 2%c 3%c", d[0], d[1], d[2]);
+}
+
+static void value_line(struct mres *r, const char *label, uint32_t value, int8_t scale, const char *unit)
+{
+    char v[12];
+    measure_format(v, sizeof v, value, scale, unit);
+    fmt(add(r), 17, "%s %s", label, v);
+}
+
+static void diode_line(struct mres *r, const char *label, uint8_t a, uint8_t c)
+{
+    Diode_Type *d = SearchDiode(a, c);
+    if (d) {
+        char v[10];
+        mv(v, sizeof v, d->V_f);
+        fmt(add(r), 17, "%s%u>%u %s", label, a + 1, c + 1, v);
+    }
+}
+
+static void describe_diodes(struct mres *r)
+{
+    fmt(r->title, sizeof r->title, Check.Diodes == 1 ? "Diode" : "Diodes x%u", Check.Diodes);
+    for (uint8_t i = 0; i < Check.Diodes && i < MRES_LINES; i++) {
+        char v[10];
+        mv(v, sizeof v, Diodes[i].V_f);
+        fmt(add(r), 17, "A%u K%u %s", Diodes[i].A + 1, Diodes[i].C + 1, v);
+    }
+    if (Check.Diodes == 1) {
+        Diode_Type *d = &Diodes[0];
+        if (d->V_f2 < 250) {                    /* Ge / Schottky: low-current V_f too */
+            char v[10];
+            mv(v, sizeof v, d->V_f2);
+            fmt(add(r), 17, "@10uA %s", v);
+        }
+        UpdateProbes2(d->C, d->A);              /* reverse leakage (probes must still be free) */
+        GetLeakageCurrent(1);
+        if (CmpValue(Semi.I_value, Semi.I_scale, 10, -9) >= 0)
+            value_line(r, "Ir", Semi.I_value, Semi.I_scale, "A");
+    }
+}
+
+static void describe_bjt(struct mres *r)
+{
+    uint8_t npn = Check.Type & TYPE_NPN;
+    fmt(r->title, sizeof r->title, "%s%s", npn ? "NPN" : "PNP", Check.Type & TYPE_PARASITIC ? " parasitic" : "");
+    pinout(r);
+    fmt(add(r), 17, "hFE %u", (unsigned)Semi.F_1);
+    Diode_Type *d = npn ? SearchDiode(Semi.A, Semi.C) : SearchDiode(Semi.C, Semi.A);
+    if (d) {                                    /* V_BE interpolated for the hFE class (upstream) */
+        int16_t slope = ((int16_t)d->V_f - (int16_t)d->V_f2) / 3;
+        int16_t vbe = Semi.F_1 < 100 ? (int16_t)d->V_f : Semi.F_1 < 250 ? (int16_t)d->V_f - slope
+                                                                         : (int16_t)d->V_f2 + slope;
+        if (d->V_f > 1000 && d->V_f2 < 700)
+            vbe = d->V_f;
+        char v[10];
+        mv(v, sizeof v, vbe);
+        fmt(add(r), 17, "Vbe %s", v);
+    }
+    if (CmpValue(Semi.I_value, Semi.I_scale, 10, -9) >= 0)
+        value_line(r, "Iceo", Semi.I_value, Semi.I_scale, "A");
+    if (npn)
+        diode_line(r, "D ", Semi.C, Semi.B);   /* flyback diode C-E */
+    else
+        diode_line(r, "D ", Semi.B, Semi.C);
+}
+
+static void describe_fet(struct mres *r)
+{
+    uint8_t t = Check.Type;
+    fmt(r->title, sizeof r->title, "%s%s %s", t & TYPE_N_CHANNEL ? "N-" : "P-",
+        Check.Found == COMP_IGBT ? "IGBT" : t & TYPE_MOSFET ? "MOSFET" : "JFET",
+        t & TYPE_ENHANCEMENT ? "enh" : t & TYPE_DEPLETION ? "dep" : "");
+    pinout(r);
+    if (t & TYPE_ENHANCEMENT) {
+        if (Semi.U_2 != 0) {
+            char v[10];
+            mv(v, sizeof v, Semi.U_2);
+            fmt(add(r), 17, "Vth %s", v);
+        }
+        if (Semi.C_value)
+            value_line(r, "Cgs", Semi.C_value, Semi.C_scale, "F");
+        if (Semi.U_1 > 0)
+            value_line(r, "Rds", Semi.U_1, -2, CH_OHM);
+    }
+    if (t & TYPE_DEPLETION && CmpValue(Semi.I_value, Semi.I_scale, 1, -6) >= 0)
+        value_line(r, "Idss", Semi.I_value, Semi.I_scale, "A");
+    if (t & TYPE_N_CHANNEL)
+        diode_line(r, "D ", Semi.C, Semi.B);
+    else
+        diode_line(r, "D ", Semi.B, Semi.C);
+}
+
+static void describe(struct mres *r)
+{
+    r->n = 0;
+    r->title[0] = 0;
+    switch (Check.Found) {
+    case COMP_NONE:
+        fmt(r->title, sizeof r->title, "no component");
+        break;
+    case COMP_ERROR:
+        fmt(r->title, sizeof r->title, "error");
+        break;
+    case COMP_RESISTOR:
+        fmt(r->title, sizeof r->title, Check.Resistors > 1 ? "Resistors" : "Resistor");
+        break;
+    case COMP_DIODE:
+        describe_diodes(r);
+        break;
+    case COMP_BJT:
+        describe_bjt(r);
+        break;
+    case COMP_FET:
+    case COMP_IGBT:
+        describe_fet(r);
+        break;
+    case COMP_THYRISTOR:
+    case COMP_TRIAC: {
+        fmt(r->title, sizeof r->title, Check.Found == COMP_TRIAC ? "Triac" : "Thyristor");
+        pinout(r);
+        char v[10];
+        mv(v, sizeof v, Semi.U_1);
+        fmt(add(r), 17, "Vgt %s", v);
+        break;
+    }
+    case COMP_PUT:
+    case COMP_UJT:
+        fmt(r->title, sizeof r->title, Check.Found == COMP_PUT ? "PUT" : "UJT");
+        break;
+    default:
+        fmt(r->title, sizeof r->title, "type %d", Check.Found);
+        break;
+    }
 }

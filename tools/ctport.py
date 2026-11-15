@@ -19,7 +19,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 UP = os.path.join(ROOT, 'ct', 'upstream')
 OUT = os.path.join(ROOT, 'ct', 'ported')
-FILES = ['probes.c', 'resistor.c', 'common.h', 'variables.h', 'functions.h', 'config_support.h',
+FILES = ['probes.c', 'resistor.c', 'semi.c', 'common.h', 'variables.h', 'functions.h', 'config_support.h',
          'colors.h'] + sorted(f for f in os.listdir(UP) if f.startswith('var_') and f.endswith('.h'))
 PORT_STMT = re.compile(r'\b(R_DDR|R_PORT|ADC_DDR|ADC_PORT)\s*(\|=|&=|=(?!=))\s*([^;]*?)\s*;')
 PIN_READ = re.compile(r'\bADC_PIN\b')
@@ -56,6 +56,49 @@ PATCHES = [
      '    }\n'
      '    Value *= Cfg.Vcc;              /* * U_ref (VDD) */\n'
      '    Value /= 4096;                 /* / 4096 for 12bit ADC */\n'),
+    ('semi.c',
+     '      GetLeakageCurrent(0);             /* get leakage current */\n',
+     '      GetLeakageCurrent(0);             /* get leakage current */\n',
+     '      /* LCR-P1: the probe nodes hold about 2 nF (AVR: tens of pF), so the open base keeps the charge of the\n'
+     '         previous step and the BJT conducts for many ms: start I_CEO with the base at emitter level */\n'
+     '      PullProbe(Probes.Rl_3, PULL_10MS | (BJT_Type == TYPE_NPN ? PULL_DOWN : PULL_UP));\n'
+     '      GetLeakageCurrent(0);             /* get leakage current */\n'),
+    ('semi.c',
+     '  ADMUX = Probes.Ch_3 | ADC_REF_VCC;    /* select probe-3 for ADC input */\n',
+     '  Ugs /= 1024;                   /* using 10 bit resolution */\n',
+     '  /* LCR-P1: the probe pins have no digital input (analog mode), so the drain is polled with\n'
+     '     the ADC (threshold half of full scale, like ADC_PIN_get()). A missing transition ends the\n'
+     '     loop after a timeout instead of waiting for the watchdog. Ugs is summed in mV. */\n'
+     '  {\n'
+     '    uint8_t Drain_Ch = (Type & TYPE_N_CHANNEL) ? Probes.Ch_1 : Probes.Ch_2;\n'
+     '    uint8_t Done = 0;\n'
+     '    (void)Drain_ADC;\n'
+     '    CT_DBG("#C Vth type=%x Rl3=%x Rh3=%x DrainRl=%x Pull=%x Rport=%x\\r\\n", Type, Probes.Rl_3, Probes.Rh_3, Drain_Rl, PullMode, R_PORT_get());\n'
+     '    for (Counter = 0; Counter < 10; Counter++)\n'
+     '    {\n'
+     '      uint32_t Timeout;\n'
+     '      wdt_reset();                       /* reset watchdog */\n'
+     '      PullProbe(Probes.Rl_3, PullMode);  /* discharge gate via Rl for 10 ms */\n'
+     '      R_DDR = Drain_Rl | Probes.Rh_3;    /* pull up/down gate via Rh to slowly charge gate */\n'
+     '      for (Timeout = 0; Timeout < 50000; Timeout++)   /* about 1 s */\n'
+     '      {\n'
+     '        uint8_t High = ct_adc_read(Drain_Ch, 1) >= 2048;\n'
+     '        if ((Type & TYPE_N_CHANNEL) ? !High : High) break;\n'
+     '      }\n'
+     '      R_DDR = Drain_Rl;                  /* set probe-3 to HiZ mode */\n'
+     '      if (Timeout >= 50000) break;       /* FET did not switch */\n'
+     '      {\n'
+     '        uint32_t U_g = ct_adc_read(Probes.Ch_3, 1) * (uint32_t)ct_adc_fs_mv / 4096;\n'
+     '        if (Type & TYPE_N_CHANNEL)\n'
+     '          Ugs += (int32_t)U_g;           /* Ugs = U_g */\n'
+     '        else\n'
+     '          Ugs += (int32_t)U_g - (int32_t)Cfg.Vcc;   /* Ugs = - (Vcc - U_g) */\n'
+     '      }\n'
+     '      CT_DBG("#C   n=%u t=%u Ug=%u\\r\\n", Counter, (unsigned)Timeout, (unsigned)(ct_adc_read(Probes.Ch_3, 1) * (uint32_t)ct_adc_fs_mv / 4096));\n'
+     '      Done++;\n'
+     '    }\n'
+     '    Ugs = Done ? Ugs / Done : 0;     /* average */\n'
+     '  }\n'),
 ]
 
 # debug output (CT_DBG, active with make CT_DEBUG=1): (file, anchor line, line inserted after it).
@@ -68,6 +111,8 @@ DEBUG = [
      '    CT_DBG("#C   UrhH=%u UriH=%u UrlL=%u UrhL=%u Vcc=%u\\r\\n", U_Rh_H, U_Ri_H, U_Rl_L, U_Rh_L, Cfg.Vcc);\n'),
     ('resistor.c', '        if (Compare == 1)          /* valid measurement */\n',
      '<        CT_DBG("#C   Compare=%d Value=%u\\r\\n", Compare, Value);\n'),
+    ('semi.c', '  if (U_1 < 10)             /* no conduction */\n',
+     '<  CT_DBG("#C PUT? %u-%u-%u Uf=%u Vt=%u U_Rl=%u\\r\\n", Probes.ID_1 + 1, Probes.ID_2 + 1, Probes.ID_3 + 1, U_2, U_3, U_1);\n'),
 ]
 
 
@@ -90,7 +135,8 @@ def patch(name, text):
 
 
 # single functions taken from upstream files whose remaining code is not used (yet)
-EXTRACT = [('user.c', 'uint8_t NumberOfDigits('), ('user.c', 'int8_t CmpValue(')]
+EXTRACT = [('user.c', 'uint8_t NumberOfDigits('), ('user.c', 'int8_t CmpValue('),
+           ('adjust.c', 'uint8_t GetOffsetIndex(')]
 
 
 def extract():

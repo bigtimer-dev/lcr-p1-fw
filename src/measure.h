@@ -11,6 +11,14 @@ int measure_ref_ok(void);           /* 2.5 V reference was in range */
 /* result access for the UI */
 int measure_resistors(void);
 void measure_resistor(int i, uint8_t *a, uint8_t *b, uint32_t *value, int8_t *scale);
+/* text result for any component: title + up to MRES_LINES lines of at most 16 characters */
+#define MRES_LINES 6
+struct mres {
+    char title[17];
+    int n;
+    char line[MRES_LINES][17];
+};
+const struct mres *measure_result(void);   /* text of the last measure_run() */
 /* "1.234k" style text, 4 significant digits */
 void measure_format(char *out, int size, uint32_t value, int8_t scale, const char *unit);
 

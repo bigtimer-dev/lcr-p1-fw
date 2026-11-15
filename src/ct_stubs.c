@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: EUPL-1.2
- * Temporary stand-ins for upstream modules not ported yet (semi.c). CheckProbes() calls these;
- * as no-ops they only mean "no semiconductor found", so resistors are still detected.
+ * Temporary stand-ins for upstream modules not ported yet (cap.c). semi.c calls MeasureCap() for the
+ * BJT B-E / MOSFET G-S capacitance; until cap.c is ported that value is reported as 0.
  * Remove each one when its module is ported.
  */
 #include "config.h"
@@ -8,10 +8,9 @@
 #include "variables.h"
 #include "functions.h"
 
-void CheckDiode(void) {}
-void VerifyMOSFET(void) {}
-void CheckTransistor(uint8_t BJT_Type, uint16_t U_Rl) { (void)BJT_Type; (void)U_Rl; }
-void CheckDepletionModeFET(uint16_t U_Rl) { (void)U_Rl; }
-uint8_t CheckThyristorTriac(void) { return 0; }
-void CheckPUT(void) {}
-void CheckUJT(void) {}
+void MeasureCap(uint8_t Probe1, uint8_t Probe2, uint8_t ID)
+{
+    (void)Probe1, (void)Probe2;
+    Caps[ID].Value = 0;
+    Caps[ID].Scale = 0;
+}

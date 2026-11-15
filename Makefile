@@ -11,7 +11,7 @@ SRC = $(wildcard src/*.c) src/font_data.c
 BUILD ?= build
 OBJ = $(patsubst src/%.c,$(BUILD)/%.o,$(sort $(SRC)))
 # ComponentTester (m-firmware, EUPL-1.2), converted by tools/ctport.py into ct/ported/
-CT_SRC = ct/ported/probes.c ct/ported/resistor.c ct/ported/ct_extract.c
+CT_SRC = ct/ported/probes.c ct/ported/resistor.c ct/ported/semi.c ct/ported/ct_extract.c
 CT_OBJ = $(patsubst ct/ported/%.c,$(BUILD)/ct_%.o,$(CT_SRC))
 CT_INC = -DLCRP1 -DF_CPU=48000000UL -Ict/ported -Ict -Ict/compat $(if $(filter 1,$(CT_DEBUG)),-DCT_DEBUG)
 CT_CFLAGS = -mcpu=cortex-m0 -mthumb -Os -g -std=gnu11 -Wall -Werror -Wno-unused-but-set-variable \

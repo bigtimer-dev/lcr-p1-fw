@@ -9,6 +9,7 @@ If the stock boot log (~/Work/lcr-p1/hwmap/boot_mmio.log) exists, the LCD init s
 compared with what the stock firmware sends.
 """
 import os
+import math
 import struct
 import subprocess
 import sys
@@ -39,6 +40,77 @@ def check(name, good, info=''):
 PORTS = {0x40010800: 'A', 0x40010C00: 'B', 0x40011000: 'C', 0x40011C00: 'F'}
 
 
+def solve3(A, b):
+    A = [row[:] for row in A]; b = b[:]
+    for c in range(3):
+        p = max(range(c, 3), key=lambda r: abs(A[r][c]))
+        A[c], A[p] = A[p], A[c]; b[c], b[p] = b[p], b[c]
+        for r in range(c + 1, 3):
+            f = A[r][c] / A[c][c]
+            for k in range(c, 3):
+                A[r][k] -= f * A[c][k]
+            b[r] -= f * b[c]
+    x = [0.0] * 3
+    for r in (2, 1, 0):
+        x[r] = (b[r] - sum(A[r][k] * x[k] for k in range(r + 1, 3))) / A[r][r]
+    return x
+
+
+class Devices:
+    """Semiconductor models (probes 0..2), e.g. ('D', a, k), ('NPN', b, c, e), ('PNP', b, c, e),
+    ('NMOS', g, d, s), ('PMOS', g, d, s). Device parameters as keyword dict in a 5th element."""
+    VT = 0.02585
+
+    @staticmethod
+    def junction(vd, Is, n):
+        """Diode current with the exponential continued linearly above 40 n Vt (Newton safety)."""
+        x = vd / (n * Devices.VT)
+        if x > 40:
+            return Is * (math.exp(40) * (1 + x - 40) - 1)
+        return Is * (math.exp(x) - 1)
+
+    @staticmethod
+    def add(d, v, out):
+        kind, p = d[0], (d[4] if len(d) > 4 else {})
+        if kind == 'D':                         # 1N4148-like: V_f about 0.70 V at 7 mA
+            a, k = d[1], d[2]
+            c = Devices.junction(v[a] - v[k], p.get('Is', 2.68e-9), p.get('n', 1.84)) + (v[a] - v[k]) * 1e-10
+            out[a] -= c; out[k] += c
+        elif kind in ('NPN', 'PNP'):            # Ebers-Moll transport model
+            b, cl, e = d[1], d[2], d[3]
+            s = 1 if kind == 'NPN' else -1
+            Is, bf, br = p.get('Is', 1e-14), p.get('bf', 200), p.get('br', 5)
+            fe = Devices.junction(s * (v[b] - v[e]), Is, 1)
+            fc = Devices.junction(s * (v[b] - v[cl]), Is, 1)
+            ic = fe - fc - fc / br              # into the collector (NPN)
+            ib = fe / bf + fc / br
+            ie = -(ic + ib)
+            out[cl] += s * -ic; out[b] += s * -ib; out[e] += s * -ie   # model currents flow into the device
+        elif kind in ('NMOS', 'PMOS'):          # square law + body diode (S->D for N)
+            gt, dr, sr = d[1], d[2], d[3]
+            s = 1 if kind == 'NMOS' else -1
+            vth, K = p.get('vth', 2.0), p.get('K', 0.5)
+            vd, vs, vg = s * v[dr], s * v[sr], s * v[gt]
+            swap = vd < vs
+            if swap:
+                vd, vs = vs, vd
+            vgs, vds = vg - vs, vd - vs
+            if vgs <= vth:
+                i = 0.0
+            elif vds < vgs - vth:
+                i = K * ((vgs - vth) * vds - vds * vds / 2)
+            else:
+                i = K / 2 * (vgs - vth) ** 2
+            if swap:
+                i = -i
+            i += vds * 1e-9 * (-1 if swap else 1)     # off-state leakage
+            out[dr] -= s * i; out[sr] += s * i      # drain -> source (N)
+            bd_ = Devices.junction(s * (v[sr] - v[dr]), 2.68e-9, 1.84)
+            out[sr] -= s * bd_; out[dr] += s * bd_
+        else:
+            raise ValueError(kind)
+
+
 class Board:
     def __init__(self):
         self.reg = {}                                   # last written value per address
@@ -58,6 +130,7 @@ class Board:
         self.us = 0
         self.v_nodes, self.t_nodes, self.g_nodes = None, 0, [0, 0, 0]
         self.dut = {}                           # {(probe_a, probe_b): ohms}, probes 0..2
+        self.devs = []                          # semiconductors, see Devices (probes 0..2)
         self.vcc = 5.020                        # ADC full scale (V)
         self.vdrive = self.vcc                  # probe pins drive to the ADC full scale (4.39 V seen on the meter was the stale-sample artifact)
         self.adc_last = None                    # (channel, value) of the previous conversion
@@ -72,10 +145,10 @@ class Board:
         self.writes += 1
         if a == 0x40003000:
             self.kr.append(v)
-        self.reg[a] = v
         base, off = a & ~0x3FF, a & 0x3FF
         if (base in PORTS and off in (0x00, 0x14, 0x18, 0x28)) and PORTS[base] in 'AB':
-            self.settle()                               # nodes move under the old drive until now
+            self.settle()                               # nodes move under the old drive (mode + level) until now
+        self.reg[a] = v
         if base in PORTS and off in (0x14, 0x18, 0x28):
             p = PORTS[base]
             old = self.out[p]
@@ -141,6 +214,11 @@ class Board:
                                                 # readings 17-45 mV off the rail after CT's 5 ms waits)
 
     def settle(self):
+        if self.devs:
+            return self.settle_nonlinear()
+        self.settle_linear()
+
+    def settle_linear(self):
         """Move the probe node voltages towards their DC values over the time since the last update,
         tau = C_NODE * Thevenin resistance of each node (coupling between nodes ignored for tau)."""
         target = self.node_volts()
@@ -155,6 +233,70 @@ class Board:
             g = self.g_nodes[n]
             k = 1 - math.exp(-dt * g / self.C_NODE) if g > 0 else 0
             self.v_nodes[n] += (target[n] - self.v_nodes[n]) * k
+
+    # ---- semiconductors: node currents + backward-Euler transient (Newton on the 3 probe nodes) ----
+    def drive_state(self):
+        """(conductance, source current) per node from the MCU pins, leak and relay/resistor links."""
+        g, i = [1 / 66e6] * 3, [0.0] * 3
+        for n, pins in enumerate(self.PROBE_PINS):
+            for (port, pin), r in zip(pins, (0, 680, 470000)):
+                on, lvl = self.driven(port, pin)
+                if on:
+                    gg = 1 / (r + (22 if lvl else 20))
+                    g[n] += gg
+                    i[n] += gg * self.vdrive * lvl
+        links = dict(self.dut)
+        if not self.pin('B', 3):
+            for pair in ((0, 1), (0, 2), (1, 2)):
+                links[pair] = 0.1
+        return g, i, links
+
+    def node_currents(self, v, g, i, links):
+        """Net current into each node (A)."""
+        out = [i[n] - g[n] * v[n] for n in range(3)]
+        for (a, b), r in links.items():
+            c = (v[a] - v[b]) / r
+            out[a] -= c; out[b] += c
+        for d in self.devs:
+            Devices.add(d, v, out)
+        return out
+
+    def settle_nonlinear(self):
+        now = max(self.us, self.ms * 1000)
+        dt = (now - self.t_nodes) * 1e-6
+        self.t_nodes = now
+        g, i, links = self.drive_state()
+        if self.v_nodes is None:
+            self.v_nodes, dt = [0.0] * 3, 1.0
+        h = 1e-6                                # geometric sub-steps: 1, 2, 4 ... us until dt is used up
+        while dt > 1e-9:
+            step = min(h, dt)
+            self.v_nodes = self.be_step(self.v_nodes, step, g, i, links)
+            dt -= step
+            h *= 2
+
+    def be_step(self, v0, h, g, i, links):
+        c = self.C_NODE / h
+        v = list(v0)
+        for _ in range(60):
+            f = self.node_currents(v, g, i, links)
+            F = [c * (v[n] - v0[n]) - f[n] for n in range(3)]
+            if max(abs(x) for x in F) < 1e-9:
+                break
+            J = [[0.0] * 3 for _ in range(3)]
+            for k in range(3):
+                vk = list(v); vk[k] += 1e-6
+                fk = self.node_currents(vk, g, i, links)
+                for n in range(3):
+                    J[n][k] = (c if n == k else 0) - (fk[n] - f[n]) / 1e-6
+            dv = solve3(J, [-x for x in F])
+            m = max(abs(x) for x in dv)
+            if m > 0.2:                         # damping: junction exponentials overshoot otherwise
+                dv = [x * 0.2 / m for x in dv]
+            v = [v[n] + dv[n] for n in range(3)]
+            if m < 1e-7:
+                break
+        return v
 
     def probe_adc(self, ch):
         self.settle()
@@ -176,6 +318,7 @@ class Board:
             v = 0x02                                    # ADC: conversion done
         elif a == 0x40020850:
             ch = self.reg.get(0x40020838, 0) & 31
+            self.us = max(self.us, self.ms * 1000) + 4  # a conversion takes time: nodes settle meanwhile
             v = self.probe_adc(ch) if ch in (1, 3, 6) else self.adc.get(ch, 0)
             # hardware: the data register returns the previous conversion's result (one-deep lag)
             v, self.adc_last = (self.adc_last[1] if self.adc_last else 0), (ch, v)
@@ -289,13 +432,23 @@ CHUNK = 3000                                            # instructions per emula
 
 
 def run_ms(n):
-    """Advance n ms: run CHUNK instructions, then tick g_ms (SysTick interrupt)."""
+    """Advance n ms. Each chunk of CHUNK instructions normally counts as 1 ms (idle code waiting for the tick).
+    When the firmware is timing itself (ADC conversions / TIM3 reads advanced the us clock in the chunk), the chunk
+    only counts its real duration at 48 MHz and the ms tick follows the us clock: busy loops such as polling
+    a node while a gate charges then see the right time between polls."""
     for _ in range(n):
-        try:
-            uc.emu_start(pc[0] | 1, 0, count=CHUNK)
-        except UcError as e:
-            raise SystemExit(f'emulation error {e} at {uc.reg_read(UC_ARM_REG_PC):#x}')
-        pc[0] = uc.reg_read(UC_ARM_REG_PC)
+        while True:
+            us0 = bd.us
+            try:
+                uc.emu_start(pc[0] | 1, 0, count=CHUNK)
+            except UcError as e:
+                raise SystemExit(f'emulation error {e} at {uc.reg_read(UC_ARM_REG_PC):#x}')
+            pc[0] = uc.reg_read(UC_ARM_REG_PC)
+            if bd.us == us0:
+                break                                   # idle: 1 ms
+            bd.us += CHUNK // 48
+            if bd.us >= (bd.ms + 1) * 1000:
+                break
         bd.ms += 1
         for _ in range(11):                             # ~11 bytes per ms at 115200 baud
             if not bd.uart_rx:
@@ -396,8 +549,10 @@ if LOWBAT:                                              # second pass: battery d
     sys.exit(1 if fails else 0)
 
 # --- measurements: TEST runs a ComponentTester probing cycle on the modelled probe network
-def measure(dut, max_ms=8000):
+def measure(dut, max_ms=8000, devs=()):
     bd.dut = dict(dut)
+    bd.devs = list(devs)
+    bd.v_nodes = None
     uart_text()
     ev0 = len(bd.events)
     bd.set_in('C', 13, 0); run_ms(80); bd.set_in('C', 13, 1)
@@ -409,6 +564,8 @@ def measure(dut, max_ms=8000):
             run_ms(600); out += uart_text()     # result screen + result beep
             break
     relay = [e for _, e in bd.events[ev0:] if e.startswith('PB3=')]
+    if os.environ.get('DUMP'):
+        print(f'--- {dut} {list(devs)}'); print('\n'.join(l for l in out.splitlines() if l.startswith('#')))
     return out, relay
 
 def resistors(out):
@@ -416,8 +573,6 @@ def resistors(out):
             if l.startswith('#R R ')]
 
 out, relay = measure({})
-if os.environ.get('DUMP'):
-    print('\n'.join(l for l in out.splitlines() if l.startswith('#C')))
 check('no part: "no component", ADC full scale from 2.5 V ref, drive level measured', 'found=0' in out
       and 'ref=1' in out and 'fs=502' in out and 'vcc=50' in out, out[-160:])
 check('relay frees the probes for the test and shorts them again after', relay[:1] == ['PB3=1'] and relay[-1:] == ['PB3=0']
@@ -441,6 +596,48 @@ check('result screen stays (no ADC rows drawn over it)', bd.lcd.count(0xB47F, 60
       and bd.lcd.count(0xFFFF, 0, 128) < 50, (bd.lcd.count(0xB47F, 60, 92), bd.lcd.count(0xFFFF, 0, 128)))
 bd.dut = {}
 check('beep: buzzer channel enabled then disabled again', bd.reg.get(0x40013420) == 0x12, hex(bd.reg.get(0x40013420, 0)))
+
+# --- semiconductors (upstream semi.c on the device models)
+def result(out):
+    """title and lines of the last '#R' result block"""
+    lines = [l for l in out.splitlines() if l.startswith('#R ') and not l.startswith('#R found')]
+    return [l[3:].strip() for l in lines]
+
+def num(text):
+    """'0.702V' -> 0.702"""
+    return float(''.join(c for c in text if c in '0123456789.-'))
+
+out, _ = measure({}, devs=[("D", 0, 2)])
+r = result(out)
+check('diode A1 K3: "Diode", V_f about 0.70 V', len(r) >= 2 and r[0] == 'Diode' and r[1].startswith('A1 K3')
+      and 0.6 < num(r[1].split()[2]) < 0.8, r)
+bd.lcd.png(os.path.join(OUTDIR, 'screen_diode.png'))
+out, _ = measure({}, devs=[('D', 1, 0), ('D', 0, 1)])
+r = result(out)
+check('anti-parallel diodes: two found', r[:1] == ['Diodes x2'], r)
+out, _ = measure({}, devs=[('NPN', 1, 0, 2)])
+r = result(out)
+hfe = [l for l in r if l.startswith('hFE')]
+check('NPN B2 C1 E3: pinout and hFE about 200, no I_CEO (model has none: base discharged first)', r[:2] == ['NPN', '1C 2B 3E']
+      and hfe and 150 < num(hfe[0]) < 260 and not any(l.startswith('Iceo') for l in r), r)
+bd.lcd.png(os.path.join(OUTDIR, 'screen_npn.png'))
+out, _ = measure({}, devs=[('PNP', 2, 1, 0, {'bf': 120})])
+r = result(out)
+hfe = [l for l in r if l.startswith('hFE')]
+check('PNP B3 C2 E1: pinout and hFE about 120, no I_CEO', r[:2] == ['PNP', '1E 2C 3B'] and hfe and 90 < num(hfe[0]) < 160
+      and not any(l.startswith('Iceo') for l in r), r)
+out, _ = measure({}, devs=[('NMOS', 0, 1, 2)])
+r = result(out)
+vth = [l for l in r if l.startswith('Vth')]
+check('N-MOSFET G1 D2 S3: pinout, V_th about 2.1 V, body diode', r[:2] == ['N-MOSFET enh', '1G 2D 3S'] and vth
+      and 1.9 < num(vth[0]) < 2.4 and any(l.startswith('D 3>2') for l in r), r)
+bd.lcd.png(os.path.join(OUTDIR, 'screen_nmos.png'))
+out, _ = measure({}, devs=[('PMOS', 2, 0, 1, {'vth': 1.5})])
+r = result(out)
+vth = [l for l in r if l.startswith('Vth')]
+check('P-MOSFET G3 D1 S2: pinout, V_th about -1.6 V, body diode', r[:2] == ['P-MOSFET enh', '1D 2S 3G'] and vth
+      and -1.9 < num(vth[0]) < -1.4 and any(l.startswith('D 1>2') for l in r), r)
+bd.devs = []
 
 # --- serial probe diagnostic with 1k on 1-2: probe 1 via Rl -> divider 1k / (680 + 1k)
 bd.dut = {(0, 1): 1000}
