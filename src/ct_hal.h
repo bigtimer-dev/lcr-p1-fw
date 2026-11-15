@@ -31,6 +31,13 @@ uint16_t ct_us(void);                                      /* free-running us co
 
 /* delays (µs timer: TIM3 at 1 MHz) */
 void ct_wait_us(uint16_t us);
+
+/* Small-cap timing (cap.c SmallCap): COMP1 compares the sense pin of probe TPn (n = channel 0..2) with VREF1
+ * = VDD * CT_COMP_VREF / 64; TIM3 CH1 captures its rising edge at 48 MHz. ct_cap_charge() releases the
+ * probes not in ddr (ADC_DDR value while charging) and returns the ticks (bit 0..15) and timer overflows
+ * (bit 16..31); overflows == max_ovf means timeout. */
+#define CT_COMP_VREF 15
+uint32_t ct_cap_charge(uint8_t channel, uint8_t ddr, uint16_t max_ovf);
 void MilliSleep(uint16_t ms);
 /* waitNNus() / waitNNms(): declared by upstream functions.h, implemented in ct_hal.c */
 #endif

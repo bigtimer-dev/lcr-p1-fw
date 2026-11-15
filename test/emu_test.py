@@ -56,6 +56,26 @@ def solve3(A, b):
     return x
 
 
+R_LEAK = 1e9                                            # probe node leak to ground in the transient models
+TC_BASE, COMP_BASE = 0x40000400, 0x40002400      # vendor TIM3 (capture), comparators
+
+
+def expm3(A):
+    """exp(A) of a 3x3 matrix: scaling and squaring with a Taylor series."""
+    mul = lambda X, Y: [[sum(X[r][k] * Y[k][c] for k in range(3)) for c in range(3)] for r in range(3)]
+    norm = max(sum(abs(x) for x in row) for row in A)
+    s = max(0, math.ceil(math.log2(norm / 0.5))) if norm > 0.5 else 0
+    X = [[x / 2 ** s for x in row] for row in A]
+    E = [[float(r == c) for c in range(3)] for r in range(3)]
+    T = [row[:] for row in E]
+    for k in range(1, 14):
+        T = [[x / k for x in row] for row in mul(T, X)]
+        E = [[E[r][c] + T[r][c] for c in range(3)] for r in range(3)]
+    for _ in range(s):
+        E = mul(E, E)
+    return E
+
+
 class Devices:
     """Semiconductor models (probes 0..2), e.g. ('D', a, k), ('NPN', b, c, e), ('PNP', b, c, e),
     ('NMOS', g, d, s), ('PMOS', g, d, s). Device parameters as keyword dict in a 5th element."""
@@ -131,6 +151,9 @@ class Board:
         self.v_nodes, self.t_nodes, self.g_nodes = None, 0, [0, 0, 0]
         self.dut = {}                           # {(probe_a, probe_b): ohms}, probes 0..2
         self.devs = []                          # semiconductors, see Devices (probes 0..2)
+        self.caps = {}                          # {(probe_a, probe_b): farads}
+        self.expm_cache = {}
+        self.tc_run, self.tc_sts, self.tc_ccr, self.tc_t0, self.tc_ovf = False, 0, 0, 0, 0
         self.vcc = 5.020                        # ADC full scale (V)
         self.vdrive = self.vcc                  # probe pins drive to the ADC full scale (4.39 V seen on the meter was the stale-sample artifact)
         self.adc_last = None                    # (channel, value) of the previous conversion
@@ -148,6 +171,14 @@ class Board:
         base, off = a & ~0x3FF, a & 0x3FF
         if (base in PORTS and off in (0x00, 0x14, 0x18, 0x28)) and PORTS[base] in 'AB':
             self.settle()                               # nodes move under the old drive (mode + level) until now
+        if a == TC_BASE + 0x10:                         # vendor TIM3 STS: write 0 to clear
+            self.tc_sts &= v
+            return
+        if a == TC_BASE:                                # vendor TIM3 CR1: start/stop
+            self.settle()
+            if v & 1 and not self.tc_run:
+                self.tc_t0, self.tc_ovf = max(self.us, self.ms * 1000), 0
+            self.tc_run = bool(v & 1)
         self.reg[a] = v
         if base in PORTS and off in (0x14, 0x18, 0x28):
             p = PORTS[base]
@@ -210,34 +241,69 @@ class Board:
             v[r] = (I[r] - sum(G[r][k] * v[k] for k in range(r + 1, 3))) / G[r][r]
         return v
 
-    C_NODE = 2e-9                               # probe node capacitance (fits the meter: 470k-only
-                                                # readings 17-45 mV off the rail after CT's 5 ms waits)
+    C_NODE = 40e-12                             # probe node capacitance (pin + PCB + socket; the meter showed a gate
+                                                # node charging through 470k in under 1 us, so it is only pF)
 
     def settle(self):
-        if self.devs:
-            return self.settle_nonlinear()
-        self.settle_linear()
-
-    def settle_linear(self):
-        """Move the probe node voltages towards their DC values over the time since the last update,
-        tau = C_NODE * Thevenin resistance of each node (coupling between nodes ignored for tau)."""
-        target = self.node_volts()
+        """Move the probe node voltages to the present time under the present drive."""
         now = max(self.us, self.ms * 1000)
         dt = (now - self.t_nodes) * 1e-6
         self.t_nodes = now
         if self.v_nodes is None:
-            self.v_nodes = target
-            return
-        import math
+            if not self.devs and not self.caps:
+                self.v_nodes = self.node_volts()
+                return
+            self.v_nodes, dt = [0.0] * 3, 1.0
+        self.v_nodes = self.propagate(self.v_nodes, dt)
+
+    def propagate(self, v0, dt):
+        """Node voltages dt seconds after v0 with the present drive (does not change the state)."""
+        if self.devs:
+            return self.propagate_nonlinear(v0, dt)
+        if self.caps:
+            return self.propagate_exact(v0, dt)
+        return self.propagate_linear(v0, dt)
+
+    def propagate_linear(self, v0, dt):
+        """tau = C_NODE * Thevenin resistance of each node (coupling between nodes ignored for tau)."""
+        target = self.node_volts()
+        v = list(v0)
         for n in range(3):
             g = self.g_nodes[n]
             k = 1 - math.exp(-dt * g / self.C_NODE) if g > 0 else 0
-            self.v_nodes[n] += (target[n] - self.v_nodes[n]) * k
+            v[n] += (target[n] - v[n]) * k
+        return v
+
+    def propagate_exact(self, v0, dt):
+        """Linear network with capacitors between probes: C dv/dt = I - G v, solved with a matrix exponential."""
+        g, i, links = self.drive_state()
+        key = (tuple(g), tuple(i), tuple(sorted(links.items())), tuple(sorted(self.caps.items())), round(dt, 12))
+        hit = self.expm_cache.get(key)
+        if hit is None:
+            G = [[0.0] * 3 for _ in range(3)]
+            for n in range(3):
+                G[n][n] += g[n]
+            for (a, b), r in links.items():
+                x = 1 / r
+                G[a][a] += x; G[b][b] += x; G[a][b] -= x; G[b][a] -= x
+            C = self.cap_matrix()
+            v_inf = solve3([r[:] for r in G], list(i))
+            cols = [solve3([r[:] for r in C], [G[r][k] for r in range(3)]) for k in range(3)]   # C^-1 G
+            A = [[-cols[k][r] * dt for k in range(3)] for r in range(3)]
+            hit = (v_inf, expm3(A))
+            if len(self.expm_cache) > 20000:
+                self.expm_cache.clear()
+            self.expm_cache[key] = hit
+        v_inf, E = hit
+        d = [v0[n] - v_inf[n] for n in range(3)]
+        return [v_inf[r] + sum(E[r][k] * d[k] for k in range(3)) for r in range(3)]
 
     # ---- semiconductors: node currents + backward-Euler transient (Newton on the 3 probe nodes) ----
     def drive_state(self):
-        """(conductance, source current) per node from the MCU pins, leak and relay/resistor links."""
-        g, i = [1 / 66e6] * 3, [0.0] * 3
+        """(conductance, source current) per node from the MCU pins, leak and relay/resistor links.
+        Leak 1 GOhm: a PNP with open base read I_CEO 0.4-0.5 uA on the meter (hFE x a few nA). The linear
+        path (node_volts) keeps 66 MOhm, fitted to 470k readings settling 35 mV low (probably ADC loading)."""
+        g, i = [1 / R_LEAK] * 3, [0.0] * 3
         for n, pins in enumerate(self.PROBE_PINS):
             for (port, pin), r in zip(pins, (0, 680, 470000)):
                 on, lvl = self.driven(port, pin)
@@ -261,26 +327,61 @@ class Board:
             Devices.add(d, v, out)
         return out
 
-    def settle_nonlinear(self):
-        now = max(self.us, self.ms * 1000)
-        dt = (now - self.t_nodes) * 1e-6
-        self.t_nodes = now
+    def propagate_nonlinear(self, v0, dt):
         g, i, links = self.drive_state()
-        if self.v_nodes is None:
-            self.v_nodes, dt = [0.0] * 3, 1.0
+        v = list(v0)
         h = 1e-6                                # geometric sub-steps: 1, 2, 4 ... us until dt is used up
         while dt > 1e-9:
             step = min(h, dt)
-            self.v_nodes = self.be_step(self.v_nodes, step, g, i, links)
+            v = self.be_step(v, step, g, i, links)
             dt -= step
             h *= 2
+        return v
+
+    # ---- COMP1 + vendor TIM3 CH1 capture (cap.c SmallCap): the counter runs at 48 MHz ----
+    def tc_poll(self):
+        """Firmware polls the timer flags: advance time by a step, capture where probe-1 crosses VREF1."""
+        self.settle()
+        now = max(self.us, self.ms * 1000)
+        dt = min(1000.0, max(0.2, 0.05 * (now - self.tc_t0)))
+        v0 = list(self.v_nodes)
+        self.us = now + dt
+        self.settle()
+        ctrl, ref = self.reg.get(COMP_BASE + 0x10, 0), self.reg.get(COMP_BASE + 0x40, 0)
+        if ctrl & 1 and ctrl >> 1 & 7 == 7 and ctrl >> 7 & 15 == 6 and ref & 1 and not self.tc_sts & 2:
+            n = ctrl >> 4 & 7
+            vref = self.vcc * (ref >> 1 & 63) / 64
+            if v0[n] < vref <= self.v_nodes[n]:
+                lo, hi = 0.0, dt
+                for _ in range(40):
+                    mid = (lo + hi) / 2
+                    if self.propagate(v0, mid * 1e-6)[n] >= vref:
+                        hi = mid
+                    else:
+                        lo = mid
+                ticks = int((now + hi + 0.1 - self.tc_t0) * 48)     # + 100 ns comparator delay
+                self.tc_ccr = ticks & 0xFFFF
+                self.tc_sts |= 2
+        ovf = int((self.us - self.tc_t0) * 48) >> 16
+        if ovf > self.tc_ovf:
+            self.tc_sts |= 1
+            self.tc_ovf = ovf
+
+    def cap_matrix(self):
+        C = [[0.0] * 3 for _ in range(3)]
+        for n in range(3):
+            C[n][n] = self.C_NODE
+        for (a, b), x in self.caps.items():
+            C[a][a] += x; C[b][b] += x; C[a][b] -= x; C[b][a] -= x
+        return C
 
     def be_step(self, v0, h, g, i, links):
-        c = self.C_NODE / h
+        C = self.cap_matrix()
+        c = [[x / h for x in row] for row in C]
         v = list(v0)
         for _ in range(60):
             f = self.node_currents(v, g, i, links)
-            F = [c * (v[n] - v0[n]) - f[n] for n in range(3)]
+            F = [sum(c[n][k] * (v[k] - v0[k]) for k in range(3)) - f[n] for n in range(3)]
             if max(abs(x) for x in F) < 1e-9:
                 break
             J = [[0.0] * 3 for _ in range(3)]
@@ -288,7 +389,7 @@ class Board:
                 vk = list(v); vk[k] += 1e-6
                 fk = self.node_currents(vk, g, i, links)
                 for n in range(3):
-                    J[n][k] = (c if n == k else 0) - (fk[n] - f[n]) / 1e-6
+                    J[n][k] = c[n][k] - (fk[n] - f[n]) / 1e-6
             dv = solve3(J, [-x for x in F])
             m = max(abs(x) for x in dv)
             if m > 0.2:                         # damping: junction exponentials overshoot otherwise
@@ -324,7 +425,13 @@ class Board:
             v, self.adc_last = (self.adc_last[1] if self.adc_last else 0), (ch, v)
         elif a == 0x40000824:                           # TIM3 counter: 1 us per read, never behind the ms tick
             self.us = max(self.us + 1, self.ms * 1000)
-            v = self.us & 0xFFFF
+            v = int(self.us) & 0xFFFF
+        elif a == TC_BASE + 0x10:
+            if self.tc_run:
+                self.tc_poll()
+            v = self.tc_sts
+        elif a == TC_BASE + 0x34:
+            v = self.tc_ccr
         elif a == 0x40012008:
             v = 0x02                                    # SPI: TX empty, not busy
         elif a == 0x40013800:                           # USART1 status: TX empty, RXNE, ORE
@@ -449,17 +556,19 @@ def run_ms(n):
             bd.us += CHUNK // 48
             if bd.us >= (bd.ms + 1) * 1000:
                 break
-        bd.ms += 1
-        for _ in range(11):                             # ~11 bytes per ms at 115200 baud
-            if not bd.uart_rx:
-                break
-            b = bd.uart_rx.pop(0)
-            if bd.rx_reg is None:
-                bd.rx_reg = b
-            else:
-                bd.rx_ore = True                        # overrun: byte lost (N32: RXNE stays as it was)
-        t = struct.unpack('<I', uc.mem_read(G_MS, 4))[0]
-        uc.mem_write(G_MS, struct.pack('<I', t + 1))
+        # the ms tick catches up when one chunk advanced the us clock by more than 1 ms (cap.c's timer polls)
+        for _ in range(max(1, int(bd.us // 1000) - bd.ms)):
+            bd.ms += 1
+            for _ in range(11):                         # ~11 bytes per ms at 115200 baud
+                if not bd.uart_rx:
+                    break
+                b = bd.uart_rx.pop(0)
+                if bd.rx_reg is None:
+                    bd.rx_reg = b
+                else:
+                    bd.rx_ore = True                    # overrun: byte lost (N32: RXNE stays as it was)
+            t = struct.unpack('<I', uc.mem_read(G_MS, 4))[0]
+            uc.mem_write(G_MS, struct.pack('<I', t + 1))
 
 
 def send(data, gap_ms=2):
@@ -549,9 +658,10 @@ if LOWBAT:                                              # second pass: battery d
     sys.exit(1 if fails else 0)
 
 # --- measurements: TEST runs a ComponentTester probing cycle on the modelled probe network
-def measure(dut, max_ms=8000, devs=()):
+def measure(dut, max_ms=8000, devs=(), caps=None):
     bd.dut = dict(dut)
     bd.devs = list(devs)
+    bd.caps = dict(caps or {})
     bd.v_nodes = None
     uart_text()
     ev0 = len(bd.events)
@@ -587,11 +697,11 @@ run_ms(2500)                                        # result must survive the on
 bd.lcd.png(os.path.join(OUTDIR, 'screen_resistor.png'))
 # edge case seen on the meter: open pairs read just under CheckResistor's 20 mV "discharged" limit
 # and get further into the check; they must still not become (phantom) resistors
-bd.C_NODE = 1.85e-9
+c_node, bd.C_NODE = bd.C_NODE, 1.85e-9
 out, _ = measure({(0, 2): 360})
 r = resistors(out)
 check('no phantom resistors when open pairs read just under 20 mV', len(r) == 1 and r[0][0] == '1-3', r)
-bd.C_NODE = 2e-9
+bd.C_NODE = c_node
 check('result screen stays (no ADC rows drawn over it)', bd.lcd.count(0xB47F, 60, 92) > 150
       and bd.lcd.count(0xFFFF, 0, 128) < 50, (bd.lcd.count(0xB47F, 60, 92), bd.lcd.count(0xFFFF, 0, 128)))
 bd.dut = {}
@@ -606,6 +716,27 @@ def result(out):
 def num(text):
     """'0.702V' -> 0.702"""
     return float(''.join(c for c in text if c in '0123456789.-'))
+
+# --- capacitors (upstream cap.c: SmallCap with COMP1 + TIM3 capture below 4.7 uF, LargeCap above)
+def cap_value(r):
+    c = [l for l in r if l.startswith('C ')]
+    if not c:
+        return None
+    t = c[0].split()[1]
+    mult = {'p': 1e-12, 'n': 1e-9, 'u': 1e-6, 'µ': 1e-6, 'm': 1e-3}
+    return num(t) * mult.get(t.rstrip('F')[-1], 1)
+
+for pair, farads, tol in (((0, 2), 100e-12, 0.05), ((1, 2), 10e-9, 0.03), ((0, 1), 1e-6, 0.03),
+                          ((0, 2), 22e-6, 0.06), ((1, 0), 470e-6, 0.08)):   # LargeCap: CAP_FACTOR_LARGE not tuned yet
+    out, _ = measure({}, max_ms=20000, caps={pair: farads})
+    r = result(out)
+    c = cap_value(r)
+    names = '%u-%u' % (min(pair) + 1, max(pair) + 1)
+    check(f'capacitor {farads:g} F on {names}: {r}', r[:1] and r[0].startswith('Capacitor') and c is not None
+          and abs(c - farads) <= tol * farads + 15e-12, out[-300:])
+    if farads == 10e-9:
+        bd.lcd.png(os.path.join(OUTDIR, 'screen_cap.png'))
+bd.caps = {}
 
 out, _ = measure({}, devs=[("D", 0, 2)])
 r = result(out)
@@ -624,15 +755,17 @@ bd.lcd.png(os.path.join(OUTDIR, 'screen_npn.png'))
 out, _ = measure({}, devs=[('PNP', 2, 1, 0, {'bf': 120})])
 r = result(out)
 hfe = [l for l in r if l.startswith('hFE')]
-check('PNP B3 C2 E1: pinout and hFE about 120, no I_CEO', r[:2] == ['PNP', '1E 2C 3B'] and hfe and 90 < num(hfe[0]) < 160
-      and not any(l.startswith('Iceo') for l in r), r)
-out, _ = measure({}, devs=[('NMOS', 0, 1, 2)])
+iceo = [l for l in r if l.startswith('Iceo')]
+check('PNP B3 C2 E1: pinout and hFE about 120, I_CEO below 1 uA (open base: leak x hFE, 0.4-0.5 uA on the meter)',
+      r[:2] == ['PNP', '1E 2C 3B'] and hfe and 90 < num(hfe[0]) < 160
+      and (not iceo or (iceo[0].endswith('nA') and num(iceo[0]) < 1000)), r)
+out, _ = measure({}, devs=[('NMOS', 0, 1, 2)], caps={(0, 2): 1e-9, (0, 1): 200e-12})   # Cgs, Cgd
 r = result(out)
 vth = [l for l in r if l.startswith('Vth')]
 check('N-MOSFET G1 D2 S3: pinout, V_th about 2.1 V, body diode', r[:2] == ['N-MOSFET enh', '1G 2D 3S'] and vth
       and 1.9 < num(vth[0]) < 2.4 and any(l.startswith('D 3>2') for l in r), r)
 bd.lcd.png(os.path.join(OUTDIR, 'screen_nmos.png'))
-out, _ = measure({}, devs=[('PMOS', 2, 0, 1, {'vth': 1.5})])
+out, _ = measure({}, devs=[('PMOS', 2, 0, 1, {'vth': 1.5})], caps={(2, 1): 1e-9, (2, 0): 200e-12})
 r = result(out)
 vth = [l for l in r if l.startswith('Vth')]
 check('P-MOSFET G3 D1 S2: pinout, V_th about -1.6 V, body diode', r[:2] == ['P-MOSFET enh', '1D 2S 3G'] and vth

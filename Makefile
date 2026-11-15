@@ -11,7 +11,7 @@ SRC = $(wildcard src/*.c) src/font_data.c
 BUILD ?= build
 OBJ = $(patsubst src/%.c,$(BUILD)/%.o,$(sort $(SRC)))
 # ComponentTester (m-firmware, EUPL-1.2), converted by tools/ctport.py into ct/ported/
-CT_SRC = ct/ported/probes.c ct/ported/resistor.c ct/ported/semi.c ct/ported/ct_extract.c
+CT_SRC = ct/ported/probes.c ct/ported/resistor.c ct/ported/semi.c ct/ported/cap.c ct/ported/ct_extract.c
 CT_OBJ = $(patsubst ct/ported/%.c,$(BUILD)/ct_%.o,$(CT_SRC))
 CT_INC = -DLCRP1 -DF_CPU=48000000UL -Ict/ported -Ict -Ict/compat $(if $(filter 1,$(CT_DEBUG)),-DCT_DEBUG)
 CT_CFLAGS = -mcpu=cortex-m0 -mthumb -Os -g -std=gnu11 -Wall -Werror -Wno-unused-but-set-variable \
@@ -28,7 +28,7 @@ $(BUILD)/%.o: src/%.c src/*.h ct/*.h ct/ported/*.h  | $(BUILD)
 	$(CC) $(CFLAGS) $(CT_INC) -c $< -o $@
 
 # LCR-P1 files built on the upstream headers: upstream's warning level
-$(BUILD)/ct_glue.o $(BUILD)/ct_stubs.o $(BUILD)/measure.o: CFLAGS = $(CT_CFLAGS)
+$(BUILD)/ct_glue.o $(BUILD)/measure.o: CFLAGS = $(CT_CFLAGS)
 $(BUILD)/libc.o: CFLAGS += -fno-tree-loop-distribute-patterns -fno-builtin
 
 $(BUILD)/ct_%.o: ct/ported/%.c ct/ported/*.h ct/*.h src/ct_hal.h  | $(BUILD)

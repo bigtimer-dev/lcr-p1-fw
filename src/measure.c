@@ -36,6 +36,7 @@ static void check_refs(void)
         Cfg.OP_Mode &= ~OP_EXT_REF;
     }
     Cfg.Vcc = ct_adc_fs_mv;
+    Cfg.Bandgap = (uint16_t)((uint32_t)ct_adc_fs_mv * CT_COMP_VREF / 64);   /* SmallCap comparator threshold */
     Cfg.Samples = ADC_SAMPLES;
 }
 
@@ -96,6 +97,11 @@ int measure_run(void)
         CheckProbes(PROBE_2, PROBE_3, PROBE_1);
         CheckProbes(PROBE_3, PROBE_2, PROBE_1);
         CheckAlternatives();
+        if (Check.Found == COMP_NONE || Check.Found == COMP_RESISTOR) {
+            MeasureCap(PROBE_3, PROBE_1, 0);
+            MeasureCap(PROBE_3, PROBE_2, 1);
+            MeasureCap(PROBE_2, PROBE_1, 2);
+        }
     }
     describe(&result);                          /* may measure more (diode leakage): before the relay */
     R_DDR_set(0);
@@ -263,6 +269,18 @@ static void describe_fet(struct mres *r)
         diode_line(r, "D ", Semi.B, Semi.C);
 }
 
+static void describe_cap(struct mres *r)              /* upstream Show_Capacitor: the largest of the 3 */
+{
+    Capacitor_Type *m = &Caps[0];
+    for (int i = 1; i < 3; i++)
+        if (CmpValue(Caps[i].Value, Caps[i].Scale, m->Value, m->Scale) == 1)
+            m = &Caps[i];
+    fmt(r->title, sizeof r->title, "Capacitor %u-%u", m->A + 1, m->B + 1);
+    value_line(r, "C", m->Value, m->Scale, "F");
+    if (m->I_leak_Value)
+        value_line(r, "Il", m->I_leak_Value, m->I_leak_Scale, "A");
+}
+
 static void describe(struct mres *r)
 {
     r->n = 0;
@@ -276,6 +294,9 @@ static void describe(struct mres *r)
         break;
     case COMP_RESISTOR:
         fmt(r->title, sizeof r->title, Check.Resistors > 1 ? "Resistors" : "Resistor");
+        break;
+    case COMP_CAPACITOR:
+        describe_cap(r);
         break;
     case COMP_DIODE:
         describe_diodes(r);

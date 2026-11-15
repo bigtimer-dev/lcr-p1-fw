@@ -19,7 +19,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 UP = os.path.join(ROOT, 'ct', 'upstream')
 OUT = os.path.join(ROOT, 'ct', 'ported')
-FILES = ['probes.c', 'resistor.c', 'semi.c', 'common.h', 'variables.h', 'functions.h', 'config_support.h',
+FILES = ['probes.c', 'resistor.c', 'semi.c', 'cap.c', 'common.h', 'variables.h', 'functions.h', 'config_support.h',
          'colors.h'] + sorted(f for f in os.listdir(UP) if f.startswith('var_') and f.endswith('.h'))
 PORT_STMT = re.compile(r'\b(R_DDR|R_PORT|ADC_DDR|ADC_PORT)\s*(\|=|&=|=(?!=))\s*([^;]*?)\s*;')
 PIN_READ = re.compile(r'\bADC_PIN\b')
@@ -36,14 +36,58 @@ EDITS = [
     ('#define BAT_OFFSET       290\n', '#define BAT_OFFSET       0\n'),
     ('#define BAT_WEAK         7400\n', '#define BAT_WEAK         3500              /* LCR-P1: 1S Li-ion */\n'),
     ('#define BAT_LOW          6400 \n', '#define BAT_LOW          3300\n'),
+    ('#define SW_ESR                 /* new method starting at 10 nF */\n',
+     '//#define SW_ESR               /* LCR-P1: not ported yet (AVR ADC timing) */\n'),
     ('#define UREF_VCC         5001\n', '#define UREF_VCC         5020              /* LCR-P1: measured via 2.5V ref */\n'),
     ('#if defined(__AVR_ATmega328__)\n  #include "config_328.h"\n',
      '#if defined(LCRP1)\n  #include "config_lcrp1.h"\n#elif defined(__AVR_ATmega328__)\n  #include "config_328.h"\n'),
 ]
 
 
-# per-file patches for MCU specific code: (file, start marker, end marker incl., replacement)
+# per-file patches for MCU specific code: (file, start marker, end marker incl., replacement[, n]).
+# The start marker must be unique, or with n given its n-th occurrence (0 = first) is used;
+# the end marker is its first occurrence after the start.
 PATCHES = [
+    ('semi.c',
+     '  if (U_1 < 10)             /* no conduction */\n',
+     '  if (U_1 < 10)             /* no conduction */\n',
+     '  /* LCR-P1: a large cap charged by the checks before (about 22 uF) passes the test above too: no current\n'
+     '     once charged. A PUT must turn on again when the gate is pulled down. */\n'
+     '  if (U_1 < 10)\n'
+     '  {\n'
+     '    R_PORT = 0;\n'
+     '    R_DDR = Probes.Rl_2 | Probes.Rl_3;    /* pull down Gate and Cathode via Rl */\n'
+     '    if (ReadU_5ms(Probes.Ch_2) < 977) U_1 = 10;    /* still no current: not a PUT */\n'
+     '  }\n'
+     '  if (U_1 < 10)             /* no conduction */\n'),
+    ('cap.c',
+     '  /* set up analog comparator */\n',
+     '  ADCSRB &= ~(1 << ACME);     /* disable ADC multiplexer as negative input */\n',
+     '  /* LCR-P1: COMP1 compares probe-1 with VREF1 (Cfg.Bandgap = VDD * CT_COMP_VREF / 64 mV) and TIM3\n'
+     '     captures its output at 48 MHz (src/ct_hal.c); the timer start and the release of probe-1 are\n'
+     '     two register writes apart */\n'
+     '  R_PORT = Probes.Rh_1;                 /* pull-up probe-1 via Rh */\n'
+     '  if (Check.Found == COMP_FET)          /* measuring C_GS */\n'
+     '  {\n'
+     '    /* keep all probe pins pulled down but probe-1 */\n'
+     '    TempByte = ((1 << TP1) | (1 << TP2) | (1 << TP3)) & ~(Probes.Pin_1);\n'
+     '  }\n'
+     '  else                                  /* normal measurement */\n'
+     '  {\n'
+     '    TempByte = Probes.Pin_2;            /* keep just probe-2 pulled down */\n'
+     '  }\n'
+     '  {\n'
+     '    uint32_t Count = ct_cap_charge(Probes.Ch_1, TempByte, CPU_FREQ / 5000);\n'
+     '    Ticks = (uint16_t)Count;\n'
+     '    Ticks2 = (uint16_t)(Count >> 16);\n'
+     '  }\n'
+     '  R_DDR = 0;                  /* set resistor port to HiZ mode */\n', 0),
+    ('cap.c',
+     '       while (ReadU(Probes.Ch_1) > 980)',
+     '         Ticks += (int8_t)Value;             /* update local U_bandgap */\n       }\n',
+     '       /* LCR-P1: no bandgap reference to adjust; the comparator threshold is VREF1 */\n'
+     '       Ticks = Cfg.Bandgap;\n'
+     '       (void)TempLong;\n'),
     ('resistor.c',
      '    /* set ADC to use bandgap reference and run a dummy conversion */\n',
      '    Value /= 1024;                 /* / 1024 for 10bit ADC */\n',
@@ -59,8 +103,8 @@ PATCHES = [
     ('semi.c',
      '      GetLeakageCurrent(0);             /* get leakage current */\n',
      '      GetLeakageCurrent(0);             /* get leakage current */\n',
-     '      /* LCR-P1: the probe nodes hold about 2 nF (AVR: tens of pF), so the open base keeps the charge of the\n'
-     '         previous step and the BJT conducts for many ms: start I_CEO with the base at emitter level */\n'
+     '      /* LCR-P1: the open base keeps the charge of the previous step (pin leakage is low) and the BJT\n'
+     '         conducts for many ms: start I_CEO with the base at emitter level */\n'
      '      PullProbe(Probes.Rl_3, PULL_10MS | (BJT_Type == TYPE_NPN ? PULL_DOWN : PULL_UP));\n'
      '      GetLeakageCurrent(0);             /* get leakage current */\n'),
     ('semi.c',
@@ -107,6 +151,14 @@ PATCHES = [
 # A line starting with '<' goes BEFORE the anchor (use it for anchors that are if/while headers:
 # a statement inserted after such a header becomes its body and changes the program).
 DEBUG = [
+    ('probes.c', '  if (U_Rl > 15)         /* > 21µA */\n',
+     '<  CT_DBG("#C Probes %u-%u-%u U_Rl=%u\\r\\n", Probes.ID_1 + 1, Probes.ID_2 + 1, Probes.ID_3 + 1, U_Rl);\n'),
+    ('cap.c', '  if (Ticks2 >= (CPU_FREQ / 5000)) Flag = 1;\n',
+     '<  CT_DBG("#C SmallC %u-%u ovf=%u ticks=%u Uc=%u Vref=%u\\r\\n", Probes.ID_1 + 1, Probes.ID_2 + 1, Ticks2, Ticks, U_c, Cfg.Bandgap);\n'),
+    ('cap.c', '      Offset = U_c - Ticks;\n',
+     '      CT_DBG("#C   CompOffset %d\\r\\n", Offset);\n'),
+    ('cap.c', '  if (U_Cap < 300)\n',
+     '<  CT_DBG("#C LargeC %u-%u mode=%x pulses=%u U=%u Uz=%d\\r\\n", Probes.ID_1 + 1, Probes.ID_2 + 1, Mode, Pulses, U_Cap, U_Zero);\n'),
     ('resistor.c', '  U_Rh_L = ReadU_5ms(Probes.Ch_1);      /* get voltage at probe-1 */\n',
      '  CT_DBG("#C R %u-%u UriL=%u UrlH=%u UrhL0=%u\\r\\n", Probes.ID_1 + 1, Probes.ID_2 + 1, U_Ri_L, U_Rl_H, U_Rh_L);\n'),
     ('resistor.c', '    U_Rh_L = ReadU_5ms(Probes.Ch_2);    /* get voltage at Rh pulled down */\n',
@@ -119,13 +171,19 @@ DEBUG = [
 
 
 def patch(name, text):
-    for f, start, end, new in PATCHES:
+    for f, start, end, new, *nth in PATCHES:
         if f != name:
             continue
-        a = text.find(start)
-        assert a >= 0 and text.count(start) == 1, f'{f}: start marker not unique: {start!r}'
+        if nth:
+            a = -1
+            for _ in range(nth[0] + 1):
+                a = text.find(start, a + 1)
+            assert a >= 0, f'{f}: start marker not found: {start!r}'
+        else:
+            a = text.find(start)
+            assert a >= 0 and text.count(start) == 1, f'{f}: start marker not unique: {start!r}'
         b = text.find(end, a)
-        assert b >= 0 and text.count(end) == 1, f'{f}: end marker not unique: {end!r}'
+        assert b >= 0, f'{f}: end marker not found: {end!r}'
         text = text[:a] + new + text[b + len(end):]
     for f, anchor, line in DEBUG:
         if f == name:

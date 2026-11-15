@@ -1132,8 +1132,8 @@ void CheckTransistor(uint8_t BJT_Type, uint16_t U_Rl)
 
     if (FET_Type > 0)              /* update requested */
     {
-      /* LCR-P1: the probe nodes hold about 2 nF (AVR: tens of pF), so the open base keeps the charge of the
-         previous step and the BJT conducts for many ms: start I_CEO with the base at emitter level */
+      /* LCR-P1: the open base keeps the charge of the previous step (pin leakage is low) and the BJT
+         conducts for many ms: start I_CEO with the base at emitter level */
       PullProbe(Probes.Rl_3, PULL_10MS | (BJT_Type == TYPE_NPN ? PULL_DOWN : PULL_UP));
       GetLeakageCurrent(0);             /* get leakage current */
 
@@ -2131,6 +2131,14 @@ void CheckPUT(void)
   ADC_DDR_set(Probes.Pin_1);               /* enable pull-up for Anode */
   U_1 = ReadU(Probes.Ch_2);             /* get voltage at Rl */
 
+  /* LCR-P1: a large cap charged by the checks before (about 22 uF) passes the test above too: no current
+     once charged. A PUT must turn on again when the gate is pulled down. */
+  if (U_1 < 10)
+  {
+    R_PORT_set(0);
+    R_DDR_set(Probes.Rl_2 | Probes.Rl_3);    /* pull down Gate and Cathode via Rl */
+    if (ReadU_5ms(Probes.Ch_2) < 977) U_1 = 10;    /* still no current: not a PUT */
+  }
   CT_DBG("#C PUT? %u-%u-%u Uf=%u Vt=%u U_Rl=%u\r\n", Probes.ID_1 + 1, Probes.ID_2 + 1, Probes.ID_3 + 1, U_2, U_3, U_1);
   if (U_1 < 10)             /* no conduction */
   {

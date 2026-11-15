@@ -452,7 +452,7 @@
  *  - uncomment to enable (choose only one)
  */
 
-#define SW_ESR                 /* new method starting at 10 nF */
+//#define SW_ESR               /* LCR-P1: not ported yet (AVR ADC timing) */
 //#define SW_OLD_ESR            /* old method starting at 180 nF */
 
 

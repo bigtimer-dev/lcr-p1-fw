@@ -952,6 +952,7 @@ void CheckProbes(uint8_t Probe1, uint8_t Probe2, uint8_t Probe3)
    *  - high hFE Darlington plus long probe leads and/or noisy environment
    */
 
+  CT_DBG("#C Probes %u-%u-%u U_Rl=%u\r\n", Probes.ID_1 + 1, Probes.ID_2 + 1, Probes.ID_3 + 1, U_Rl);
   if (U_Rl > 15)         /* > 21µA */
   {
     if (Check.Done == DONE_NONE)        /* not sure yet */

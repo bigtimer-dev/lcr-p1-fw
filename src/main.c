@@ -11,7 +11,7 @@
 #include "lcd.h"
 #include "uart.h"
 
-#define VERSION   "0.4"
+#define VERSION   "0.5"
 #define IDLE_OFF_MS (3u * 60 * 1000)
 #define LOWBAT_MV 3300          /* as stock: switch off at or below this */
 
