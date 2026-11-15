@@ -387,6 +387,16 @@ check('result screen stays (no ADC rows drawn over it)', bd.lcd.count(0xB47F, 60
 bd.dut = {}
 check('beep: buzzer channel enabled then disabled again', bd.reg.get(0x40013420) == 0x12, hex(bd.reg.get(0x40013420, 0)))
 
+# --- serial probe diagnostic with 1k on 1-2: probe 1 via Rl -> divider 1k / (680 + 1k)
+bd.dut = {(0, 1): 1000}
+uart_text(); bd.uart_rx += b'D'; run_ms(400)
+s = uart_text()
+d = [l for l in s.splitlines() if l.startswith('#D P1 Rl')]
+v = int(d[0].split()[3]) if d else -1
+check('diag: P1 via Rl with 1k to P2 (low) reads ~59 % of Vcc', 0.55 < v / 4096 < 0.63 and '#D end' in s, d)
+check('diag: probes shorted again afterwards', bd.pin('B', 3) == 0)
+bd.dut = {}
+
 # --- ZENER: logged, HV stays off
 bd.set_in('F', 7, 0)
 run_ms(100)

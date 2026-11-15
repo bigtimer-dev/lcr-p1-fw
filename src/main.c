@@ -4,6 +4,7 @@
  * Hold TEST 1 s = off, 3 min idle = off, low battery = off. The HV boost is never enabled.
  */
 #include "adc.h"
+#include "hw.h"
 #include "ct_hal.h"
 #include "measure.h"
 #include "board.h"
@@ -46,6 +47,38 @@ static void off(const char *why)
     beep(80);
     delay_ms(600);
     power_off();
+}
+
+/* serial 'D': probe network diagnostic. For each probe: drive it high via Rl, Rh or directly while the
+   other two are pulled low directly; print the three probe voltages (raw, 8 samples) and the GPIO state. */
+static void probe_diag(void)
+{
+    static const char *how[3] = {"Rl", "Rh", "dir"};
+    ADC_DDR_set(0);                             /* relay on: probes free */
+    MilliSleep(50);
+    uprintf("#D relay PB3=%d\r\n", (int)(R32(GPIOB + 0x14) >> 3 & 1));
+    for (int p = 0; p < 3; p++)
+        for (int m = 0; m < 3; m++) {
+            uint8_t others = (uint8_t)(7 & ~(1u << p));
+            R_DDR_set(0);
+            R_PORT_set(0);
+            ADC_PORT_set(m == 2 ? (uint8_t)(1u << p) : 0);
+            ADC_DDR_set(m == 2 ? 7 : others);
+            if (m < 2) {
+                uint8_t bit = (uint8_t)(1u << (2 * p + m));
+                R_PORT_set(bit);
+                R_DDR_set(bit);
+            }
+            MilliSleep(5);
+            uprintf("#D P%d %s: %u %u %u  A mode=%x out=%x  B mode=%x out=%x\r\n", p + 1, how[m],
+                    adc_raw(1, 8) / 8, adc_raw(3, 8) / 8, adc_raw(6, 8) / 8,
+                    R32(GPIOA), R32(GPIOA + 0x14), R32(GPIOB), R32(GPIOB + 0x14));
+        }
+    R_DDR_set(0);
+    R_PORT_set(0);
+    ADC_PORT_set(0);
+    ADC_DDR_set(1 << 4);                        /* probes shorted again */
+    uprintf("#D end\r\n");
 }
 
 static void show_result(int found, uint32_t ms)
@@ -179,6 +212,8 @@ int main(void)
         int c = uart_getc();
         if (c == 'T')
             c_test = 1;                         /* serial: run a test */
+        if (c == 'D')
+            probe_diag();
         if (c == '?')
             uprintf("#? t=%u test=%d zener=%d ir=%d relay=%d adc=%d\r\n", g_ms, t, z, m, relay_on, adc_ok);
     }
