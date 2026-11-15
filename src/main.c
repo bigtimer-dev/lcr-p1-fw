@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: EUPL-1.2
  * LCR-P1 open firmware, phase 2 step 2: ComponentTester probing (resistors so far).
- * Page 0: TEST runs a probing cycle and shows the result. Page 1 (ZENER switches pages): ADC readings.
+ * Page 0: TEST runs a probing cycle and shows the result. Page 1 (serial #A switches pages): ADC readings.
+ * ZENER: Zener mode, HV boost on, voltage of the K-A-A socket.
  * Mode switch on IR: decodes remote controls (ir.c).
  * Hold TEST 1 s = off, 3 min idle = off, low battery = off. The HV boost is never enabled.
  */
@@ -14,7 +15,7 @@
 #include "lcd.h"
 #include "uart.h"
 
-#define VERSION   "0.9"
+#define VERSION   "1.0"
 #define IDLE_OFF_MS (3u * 60 * 1000)
 #define LOWBAT_MV 3300          /* as stock: switch off at or below this */
 
@@ -42,6 +43,7 @@ static const struct { const char *name; uint8_t ch; uint8_t mul; } adc_rows[] = 
 
 static void off(const char *why)
 {
+    gpio_set(PIN_HV, 0);
     relay(0);
     uprintf("power off (%s)\r\n", why);
     lcd_fill(0, 45, LCD_W, LCD_H - 45, C_BLACK);
@@ -50,6 +52,64 @@ static void off(const char *why)
     beep(80);
     delay_ms(600);
     power_off();
+}
+
+/* Zener mode (ZENER key): the boost converter (PF6) feeds the K-A-A socket through a ~5 mA current
+   limit, PA2 reads the socket through a 10:1 divider. Like the stock firmware the relay is on meanwhile.
+   Shows the voltage live; an empty socket reads the boost's open voltage (over 33 V: "open"). TEST or
+   ZENER leaves (boost off), the IR switch too. Returns the time of the last key press. */
+#define ZENER_OPEN_MV 33000                     /* above: socket open (stock limit 33 V) */
+static uint32_t zener_mode(void)
+{
+    char b[16];
+    uint32_t last = 0, idle = g_ms;
+    int last_state = -1;
+    header();
+    lcd_text(4, 52, "Zener", &font16, C_ACCENT, C_BLACK);
+    lcd_text(4, 110, "TEST: back", &font16, C_LABEL, C_BLACK);
+    relay(1);
+    gpio_set(PIN_HV, 1);
+    uprintf("zener on\r\n");
+    for (;;) {
+        wdt_feed();
+        beep_poll();
+        int ev = key_poll();
+        if (ev == KEY_TEST_LONG)
+            off("key");
+        if (ev != KEY_NONE)
+            idle = g_ms;
+        if (ev == KEY_TEST || ev == KEY_ZENER || mode_ir())
+            break;
+        if (g_ms - idle > IDLE_OFF_MS)
+            off("idle");
+        if (g_ms - last < 250)
+            continue;
+        last = g_ms;
+        uint32_t raw = adc_raw(ADC_CH_ZENER, 16) / 16;
+        uint32_t mv = raw * 10 * adc_vref_mv / 4096;
+        int state = mv > ZENER_OPEN_MV ? 2 : mv < 100 ? 0 : 1;
+        if (state == 1) {
+            fmt(b, sizeof b, "%u.%02u V", mv / 1000, mv % 1000 / 10);
+            lcd_fill(0, 76, LCD_W, 40, C_BLACK);
+            lcd_text((LCD_W - lcd_text_width(b, &font24)) / 2, 84, b, &font24, C_ACCENT, C_BLACK);
+        } else if (state != last_state) {
+            const char *t = state ? "open" : "short";
+            lcd_fill(0, 76, LCD_W, 40, C_BLACK);
+            lcd_text((LCD_W - lcd_text_width(t, &font24)) / 2, 84, t, &font24, C_WHITE, C_BLACK);
+        }
+        if (state != last_state && state == 1)
+            beep(20);
+        last_state = state;
+        static uint32_t last_log;
+        if (g_ms - last_log >= 500) {
+            last_log = g_ms;
+            uprintf("#Z %u %u\r\n", mv, raw);
+        }
+    }
+    gpio_set(PIN_HV, 0);
+    relay(0);
+    uprintf("zener off\r\n");
+    return idle;
 }
 
 /* serial 'D': probe network diagnostic. For each probe: drive it high via Rl, Rh or directly while the
@@ -337,9 +397,10 @@ int main(void)
             shown = 1;
             beep(found ? 60 : 20);
         } else if (ev == KEY_ZENER) {
-            page = !page, redraw = 1, shown = 0;
             beep(20);
-            uprintf("key ZENER: page %d\r\n", page);
+            idle = zener_mode();
+            page = 0, redraw = 1, shown = 0;
+            continue;
         }
         if (ev == KEY_TEST_LONG)
             off("key");
@@ -420,6 +481,8 @@ int main(void)
                 c_test = 2;                     /* self-adjustment */
             else if (k == 'N')
                 nv_print("current");
+            else if (k == 'A')
+                page = !page, redraw = 1, shown = 0, uprintf("#A page %d\r\n", page);
 #ifdef CT_DEBUG
             else if (k == 'E' && arg <= 15) {   /* ADC sampling instant scan (sets the ESR timing) */
                 relay(1);                       /* probes free */

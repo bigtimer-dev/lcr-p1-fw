@@ -117,7 +117,7 @@ enum { PULL_NONE, PULL_UP, PULL_DOWN };
 /* Board pins */
 #define PIN_POWER   GPIOA, 8      /* power latch: 1 keeps the meter on */
 #define PIN_RELAY   GPIOB, 3      /* 1 = relay on = probes released (idle: probes shorted together) */
-#define PIN_HV      GPIOF, 6      /* Zener HV boost enable (never set in phase 1) */
+#define PIN_HV      GPIOF, 6      /* Zener HV boost enable (1 = on, only in Zener mode) */
 #define PIN_KEY_TEST  GPIOC, 13   /* active low */
 #define PIN_KEY_ZENER GPIOF, 7    /* active low */
 #define PIN_MODE_IR   GPIOC, 14   /* 1 = slide switch on IR */

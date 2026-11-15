@@ -139,6 +139,7 @@ class Board:
         self.inp['C'] |= 1 << 13                        # TEST released (pull-up)
         self.inp['F'] |= 1 << 7                         # ZENER released
         self.inp['A'] |= 1 << 11                        # IR receiver idle (high)
+        self.zener = None                               # Zener diode in the K-A-A socket (V), None = empty
         self.ir = None                                  # (start us, [mark, space, mark ...] us) on PA11
         self.events = []                                # (ms, what)
         self.uart_tx, self.uart_rx = bytearray(), bytearray()   # uart_rx: bytes the PC is sending
@@ -162,6 +163,12 @@ class Board:
         self.esr = {}                           # {(probe_a, probe_b): ohms} series resistance of self.caps
         self.ind = {}                           # {(probe_a, probe_b): henries} in series with self.dut[pair]
         self.tc_arm = 0                         # time the capture got enabled (CCER)
+
+    def zener_raw(self):
+        if not self.out['F'] >> 6 & 1:
+            return 0
+        v = 38.0 if self.zener is None else self.zener          # boost open voltage: a guess
+        return min(4095, int(v / 10 * 4096 / 5.032))
 
     def ir_level(self, now):
         """PA11 while an IR frame plays: low during marks."""
@@ -194,7 +201,10 @@ class Board:
             v = self.esr_instant({1: 0, 3: 1, 6: 2}[ch])
         else:
             self.us = max(self.us, self.ms * 1000) + 4  # a conversion takes time: nodes settle meanwhile
-            v = self.probe_adc(ch) if ch in (1, 3, 6) else self.adc.get(ch, 0)
+            if ch == 2:                                 # Zener socket via 10:1: boost on (PF6) -> the
+                v = self.zener_raw()                    # diode voltage, or the open boost voltage
+            else:
+                v = self.probe_adc(ch) if ch in (1, 3, 6) else self.adc.get(ch, 0)
         self.adc_pending = (self.us, v)
 
     def esr_instant(self, n):
@@ -1156,28 +1166,65 @@ check('drive experiment runs and restores', '#X end' in s and bd.pin('B', 3) == 
 check('diag: probes shorted again afterwards', bd.pin('B', 3) == 0)
 bd.dut = {}
 
-# --- ZENER: logged, HV stays off
-bd.set_in('F', 7, 0)                    # 300 ms presses: emulated LCD drawing is ~16x slower than on the
-run_ms(300)                             # meter, the page-1 redraw alone can swallow a 100 ms press
-bd.set_in('F', 7, 1)
-run_ms(400)
-bd.set_in('F', 7, 0)
-run_ms(300)
-bd.set_in('F', 7, 1)
-run_ms(400)
+# --- ZENER: Zener mode (boost on), released on exit; the ZENER+TEST chord never starts it
+def zener_press():
+    bd.set_in('F', 7, 0); run_ms(300); bd.set_in('F', 7, 1); run_ms(600)
+
+uart_text()
+bd.zener = 12.0
+zener_press()
+s = ''
+for _ in range(30):
+    run_ms(100); s += uart_text()
+    if s.count('#Z ') >= 2:
+        break
+zl = [l.split() for l in s.splitlines() if l.startswith('#Z ')]
+check('ZENER: boost + relay on, 12 V diode read as 12 V', bd.pin('F', 6) == 1 and bd.pin('B', 3) == 1
+      and 'zener on' in s and zl and abs(int(zl[-1][1]) - 12000) < 360, s[-200:])   # emulated ref ~2 % off
+bd.lcd.png(os.path.join(OUTDIR, 'screen_zener.png'))
+check('Zener voltage drawn', bd.lcd.count(0xB47F, 80, 112) > 100)
+bd.zener = None
+run_ms(800)
 s = uart_text()
-check('ZENER switches page 1 and back, HV boost still off',
-      'key ZENER: page 1' in s and 'key ZENER: page 0' in s and bd.pin('F', 6) == 0, s)
+zl = [l.split() for l in s.splitlines() if l.startswith('#Z ')]
+check('empty socket: open (> 33 V)', zl and int(zl[-1][1]) > 33000 and bd.lcd.count(0xFFFF, 80, 112) > 50, s[-200:])
+zener_press()
+s = uart_text()
+check('ZENER again: boost and relay off', bd.pin('F', 6) == 0 and bd.pin('B', 3) == 0 and 'zener off' in s, s[-200:])
+bd.zener = 5.1
+zener_press()
+s = ''
+for _ in range(30):
+    run_ms(100); s += uart_text()
+    if '#Z ' in s:
+        break
+bd.set_in('C', 13, 0); run_ms(300); bd.set_in('C', 13, 1); run_ms(600)
+s += uart_text()
+check('TEST leaves Zener mode (5.1 V shown before)', bd.pin('F', 6) == 0 and 'zener off' in s
+      and any(l.startswith(('#Z 49', '#Z 50', '#Z 51')) for l in s.splitlines()), s[-300:])
+bd.zener = None
+hv_on = sum(e == 'PF6=1' for _, e in bd.events)
+
+# chord ZENER held + TEST = self-adjust: never Zener mode; ZENER cancels the adjust
+bd.set_in('F', 7, 0); run_ms(300)
+bd.set_in('C', 13, 0); run_ms(300); bd.set_in('C', 13, 1); run_ms(300)
+bd.set_in('F', 7, 1)
+out = wait_for('Short all probes', '')
+check('ZENER+TEST chord: self-adjust, HV stays off', 'Short all probes' in out and 'zener on' not in out
+      and bd.pin('F', 6) == 0, out[-200:])
+zener_press(); run_ms(1500)
+out = uart_text()
+check('ZENER cancels the self-adjust, no Zener mode', 'zener on' not in out and bd.pin('F', 6) == 0, out[-200:])
 
 # --- mode switch: IR remote decoding
 ir_tests()
 uart_text()
 
-# --- ADC page
-bd.set_in('F', 7, 0); run_ms(100); bd.set_in('F', 7, 1); run_ms(1200)
+# --- ADC page (serial #A)
+uart_text(); send(b'#A\n'); run_ms(1500)
 bd.lcd.png(os.path.join(OUTDIR, 'screen_adc.png'))
-check('ADC page drawn (ZENER switches page)', bd.lcd.count(0xB47F, 0, 16) > 30 and bd.lcd.count(0x8C33, 0, 128) > 100)
-bd.set_in('F', 7, 0); run_ms(100); bd.set_in('F', 7, 1); run_ms(1200)
+check('ADC page drawn (#A switches page)', bd.lcd.count(0xB47F, 0, 16) > 30 and bd.lcd.count(0x8C33, 0, 128) > 100)
+send(b'#A\n'); run_ms(1500)
 uart_text()
 
 # --- implausible battery reading (0 V): never switches off
@@ -1218,7 +1265,7 @@ s = uart_text()
 check('long TEST: PA8 cleared, relay off, logged', bd.pin('A', 8) == 0 and bd.pin('B', 3) == 0
       and 'power off (key)' in s, s)
 bd.lcd.png(os.path.join(OUTDIR, 'screen_off.png'))
-check('HV boost pin never set', not any(e == 'PF6=1' for _, e in bd.events))
+check('HV boost set only in Zener mode (not by self-adjust, power off)', bd.pin('F', 6) == 0 and sum(e == 'PF6=1' for _, e in bd.events) == hv_on)
 
 # --- tick ISR: clears the update flag and counts
 RET = 0x08000100

@@ -187,7 +187,7 @@ void board_init(void)
 }
 
 /* keys: sampled from the main loop, 20 ms debounce; TEST held 1 s = TEST_LONG */
-static uint8_t st_test, st_zener, long_sent, armed;
+static uint8_t st_test, st_zener, long_sent, armed, z_chord;
 static uint32_t t_test, t_zener, t_down;
 
 int key_test_down(void) { return !gpio_get(PIN_KEY_TEST); }
@@ -214,10 +214,14 @@ int key_poll(void)
     }
     if (st_test && !long_sent && now - t_down >= 1000)
         long_sent = 1, ev = KEY_TEST_LONG;
+    if (ev == KEY_TEST && st_zener)
+        z_chord = 1;                            /* ZENER held + TEST (self-adjust): no ZENER event */
     if (z != st_zener && now - t_zener >= 20) {
         st_zener = z, t_zener = now;
-        if (z && ev == KEY_NONE)
-            ev = KEY_ZENER;
+        if (z)
+            z_chord = 0;
+        else if (!z_chord && ev == KEY_NONE)
+            ev = KEY_ZENER;                     /* on release, so a chord never starts the HV boost */
     }
     return ev;
 }

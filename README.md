@@ -13,7 +13,7 @@ then press **TEST** to enter update mode at any time, so stock firmware can alwa
 
 ## Status
 
-Version 0.9 runs on the meter and measures with ComponentTester's algorithms:
+Version 1.0 runs on the meter and measures with ComponentTester's algorithms:
 
 | | |
 |---|---|
@@ -24,9 +24,10 @@ Version 0.9 runs on the meter and measures with ComponentTester's algorithms:
 | FETs | pinout, gate threshold (Vth) |
 | inductors | from about 20 µH, when the coil is below 2 kΩ (shown with its resistance) |
 | IR remotes | mode switch on IR: NEC, Samsung32, Sony 12/15/20, RC5, Gree/Kelvinator AC |
+| Zener diodes | ZENER key: K-A-A socket, 0.1 to 33 V (boost open voltage ~37 V), ~5 mA |
 | self-adjustment | R0 (probe resistance), RiL / RiH (MCU pin resistance), C0 (probe capacitance) |
 
-Not done yet: Zener test (the HV boost is never switched on).
+All functions of the stock firmware are covered.
 
 Typical test times: empty socket 1.1 s, resistor 1.2 s, 330 µF electrolytic 5.6 s (large caps need time to
 charge and discharge).
@@ -34,7 +35,8 @@ charge and discharge).
 ### Use
 
 - **TEST**: measure the part in the socket. The result stays on screen until the next key.
-- **ZENER**: switch between the result and a status page.
+- **ZENER** (press and release): Zener mode. The boost converter feeds the K-A-A socket and the voltage
+  is shown live ("open" above 33 V, "short" below 0.1 V); TEST or ZENER goes back with the boost off.
 - **ZENER held + TEST**: self-adjustment. Short all three probes and press TEST, then remove the short and
   press TEST. The values are stored in flash and survive firmware updates. ZENER cancels.
 - **TEST held 1 s**: power off. The meter also switches off after 3 min without use and at 3.3 V battery.
@@ -78,6 +80,7 @@ USB serial, 115200 8N1. The meter logs events and the ADC once a second (`#A ...
 | `#T` | run a test (result as `#R` lines) |
 | `#J` | self-adjustment (`T` / `Z` over serial stand for TEST / ZENER) |
 | `#N` | print the adjustment values |
+| `#A` | ADC status page on/off (Zener mode logs `#Z <mV> <raw>`) |
 | `#?` | status line |
 | `#S<n>`, `#P<n>` | ADC sample time code for measurements / fast polls |
 | `#W` | measure with sample time codes 12..15 |
