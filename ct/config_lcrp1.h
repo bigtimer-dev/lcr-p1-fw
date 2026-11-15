@@ -11,6 +11,14 @@
 
 #include "ct_hal.h"
 
+/* debug output inserted by tools/ctport.py (build with make CT_DEBUG=1) */
+#ifdef CT_DEBUG
+  void uprintf(const char *fmt, ...);
+  #define CT_DBG(...) uprintf(__VA_ARGS__)
+#else
+  #define CT_DBG(...) ((void)0)
+#endif
+
 /* ************************************************************************
  *   display module: ST7735S-type 128x128 panel on hardware SPI
  *   (the LCD_* functions are implemented in src/ct_display.c on top of src/lcd.c)

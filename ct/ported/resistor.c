@@ -263,6 +263,7 @@ void CheckResistor(void)
   R_PORT_set(0);                           /* set resistor port low */
   R_DDR_set(Probes.Rh_1);                  /* pull down probe-1 via Rh */
   U_Rh_L = ReadU_5ms(Probes.Ch_1);      /* get voltage at probe-1 */
+  CT_DBG("#C R %u-%u UriL=%u UrlH=%u UrhL0=%u\r\n", Probes.ID_1 + 1, Probes.ID_2 + 1, U_Ri_L, U_Rl_H, U_Rh_L);
 
   /* we got a resistor if the voltage is near Gnd */
   if (U_Rh_L <= 20)
@@ -291,6 +292,7 @@ void CheckResistor(void)
     /* set probes: Gnd -- Rh -- probe-2 / probe-1 -- Vcc */
     R_DDR_set(Probes.Rh_2);                /* pull down probe-2 via Rh */
     U_Rh_L = ReadU_5ms(Probes.Ch_2);    /* get voltage at Rh pulled down */
+    CT_DBG("#C   UrhH=%u UriH=%u UrlL=%u UrhL=%u Vcc=%u\r\n", U_Rh_H, U_Ri_H, U_Rl_L, U_Rh_L, Cfg.Vcc);
 
     /* check voltage breakdown to filter out other components */
     if ((U_Rl_H >= 4400) || (U_Rh_H <= 97))   /* R >= 5.1k or R < 9.3k */
@@ -474,6 +476,7 @@ void CheckResistor(void)
          */
 
         if (Compare == 1)          /* valid measurement */
+        CT_DBG("#C   Compare=%d Value=%u\r\n", Compare, Value);
         {
           Scale = -1;              /* 0.1 Ohms by default */
 

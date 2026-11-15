@@ -58,6 +58,16 @@ PATCHES = [
      '    Value /= 4096;                 /* / 4096 for 12bit ADC */\n'),
 ]
 
+# debug output (CT_DBG, active with make CT_DEBUG=1): (file, anchor line, line inserted after it)
+DEBUG = [
+    ('resistor.c', '  U_Rh_L = ReadU_5ms(Probes.Ch_1);      /* get voltage at probe-1 */\n',
+     '  CT_DBG("#C R %u-%u UriL=%u UrlH=%u UrhL0=%u\\r\\n", Probes.ID_1 + 1, Probes.ID_2 + 1, U_Ri_L, U_Rl_H, U_Rh_L);\n'),
+    ('resistor.c', '    U_Rh_L = ReadU_5ms(Probes.Ch_2);    /* get voltage at Rh pulled down */\n',
+     '    CT_DBG("#C   UrhH=%u UriH=%u UrlL=%u UrhL=%u Vcc=%u\\r\\n", U_Rh_H, U_Ri_H, U_Rl_L, U_Rh_L, Cfg.Vcc);\n'),
+    ('resistor.c', '        if (Compare == 1)          /* valid measurement */\n',
+     '        CT_DBG("#C   Compare=%d Value=%u\\r\\n", Compare, Value);\n'),
+]
+
 
 def patch(name, text):
     for f, start, end, new in PATCHES:
@@ -68,6 +78,10 @@ def patch(name, text):
         b = text.find(end, a)
         assert b >= 0 and text.count(end) == 1, f'{f}: end marker not unique: {end!r}'
         text = text[:a] + new + text[b + len(end):]
+    for f, anchor, line in DEBUG:
+        if f == name:
+            assert text.count(anchor) == 1, f'{f}: debug anchor not unique: {anchor!r}'
+            text = text.replace(anchor, anchor + line)
     return text
 
 

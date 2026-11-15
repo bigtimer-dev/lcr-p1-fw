@@ -12,7 +12,7 @@ OBJ = $(patsubst src/%.c,build/%.o,$(sort $(SRC)))
 # ComponentTester (m-firmware, EUPL-1.2), converted by tools/ctport.py into ct/ported/
 CT_SRC = ct/ported/probes.c ct/ported/resistor.c ct/ported/ct_extract.c
 CT_OBJ = $(patsubst ct/ported/%.c,build/ct_%.o,$(CT_SRC))
-CT_INC = -DLCRP1 -DF_CPU=48000000UL -Ict/ported -Ict -Ict/compat
+CT_INC = -DLCRP1 -DF_CPU=48000000UL -Ict/ported -Ict -Ict/compat $(if $(filter 1,$(CT_DEBUG)),-DCT_DEBUG)
 CT_CFLAGS = -mcpu=cortex-m0 -mthumb -Os -g -std=gnu11 -Wall -Werror -Wno-unused-but-set-variable \
             -ffreestanding -fno-common -ffunction-sections -fdata-sections -Isrc $(CT_INC)
 OBJ += $(CT_OBJ)

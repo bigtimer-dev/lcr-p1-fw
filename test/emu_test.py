@@ -57,7 +57,7 @@ class Board:
         self.us = 0
         self.dut = {}                           # {(probe_a, probe_b): ohms}, probes 0..2
         self.vcc = 5.020                        # ADC full scale (V)
-        self.vdrive = 4.39                      # level a probe pin drives high to (measured on the meter)
+        self.vdrive = self.vcc                  # probe pins drive to the ADC full scale (4.39 V seen on the meter was the stale-sample artifact)
         self.adc_last = None                    # (channel, value) of the previous conversion
 
     def pin(self, port, n):
@@ -377,7 +377,7 @@ def resistors(out):
 
 out, relay = measure({})
 check('no part: "no component", ADC full scale from 2.5 V ref, drive level measured', 'found=0' in out
-      and 'ref=1' in out and 'fs=502' in out and 'vcc=43' in out, out[-160:])
+      and 'ref=1' in out and 'fs=502' in out and 'vcc=50' in out, out[-160:])
 check('relay frees the probes for the test and shorts them again after', relay[:1] == ['PB3=1'] and relay[-1:] == ['PB3=0']
       and bd.pin('B', 3) == 0, relay)
 for dut, pins, ohms, tol in (({(0, 1): 1000}, '1-2', 1000, 0.01), ({(1, 2): 360}, '2-3', 360, 0.01),
@@ -399,7 +399,7 @@ uart_text(); bd.uart_rx += b'D'; run_ms(400)
 s = uart_text()
 d = [l for l in s.splitlines() if l.startswith('#D P1 Rl')]
 v = int(d[0].split()[3]) if d else -1
-check('diag: P1 via Rl with 1k to P2 (low) reads ~52 % of full scale (4.39 V drive)', 0.48 < v / 4096 < 0.56
+check('diag: P1 via Rl with 1k to P2 (low) reads ~59 % of full scale', 0.55 < v / 4096 < 0.63
       and '#D end' in s, d)
 uart_text(); bd.uart_rx += b'X'; run_ms(300)
 s = uart_text()
