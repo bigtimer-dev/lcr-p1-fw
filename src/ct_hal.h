@@ -41,6 +41,7 @@ void ct_wait_us(uint16_t us);
 uint8_t ct_esr_sums(uint8_t id1, uint8_t id2, uint32_t *sum1, uint32_t *sum2);
 extern uint8_t ct_esr_ks, ct_esr_kp;
 uint32_t ct_cap_charge(uint8_t channel, uint8_t ddr, uint16_t max_ovf);
+uint32_t ct_ind_charge(uint8_t channel, uint8_t pin1, uint8_t arm_us, uint16_t max_ovf);
 void MilliSleep(uint16_t ms);
 #ifdef CT_DEBUG
 extern struct ct_prof { uint32_t adc_us, n_adc, sleep_ms, n_sleep; } ct_prof;

@@ -12,7 +12,7 @@
 #include "lcd.h"
 #include "uart.h"
 
-#define VERSION   "0.7"
+#define VERSION   "0.8"
 #define IDLE_OFF_MS (3u * 60 * 1000)
 #define LOWBAT_MV 3300          /* as stock: switch off at or below this */
 
@@ -174,7 +174,7 @@ static void show_result(int found, uint32_t ms)
     uprintf("#R found=%d vcc=%u fs=%u ref=%d ms=%u\r\n", found, measure_vcc(), measure_adc_fs(), measure_ref_ok(), ms);
     int n = measure_resistors();
     if (n) {
-        lcd_text(4, 48, n > 1 ? "Resistors" : "Resistor", &font16, C_LABEL, C_BLACK);
+        lcd_text(4, 48, measure_result()->title, &font16, C_LABEL, C_BLACK);
         for (int i = 0; i < n; i++) {
             uint8_t a, b;
             uint32_t value;
@@ -185,6 +185,15 @@ static void show_result(int found, uint32_t ms)
             lcd_text(4, 68 + 26 * i, line, &font16, C_LABEL, C_BLACK);
             lcd_text(36, 64 + 26 * i, v, &font24, C_ACCENT, C_BLACK);
             uprintf("#R R %u-%u %u e%d\r\n", a, b, value, scale);
+        }
+        uint32_t lv;
+        int8_t ls;
+        if (measure_inductor(&lv, &ls)) {                   /* single resistor: room for the L row */
+            measure_format(v, sizeof v, lv, ls, "H");
+            lcd_text(4, 98, "L", &font16, C_LABEL, C_BLACK);
+            lcd_text(36, 94, v, &font24, C_ACCENT, C_BLACK);
+            uprintf("#R L %u e%d\r\n", lv, ls);
+            return;                                         /* the L row takes the Vcc line's place */
         }
     } else {
         const struct mres *r = measure_result();

@@ -12,6 +12,7 @@ int measure_ref_ok(void);           /* 2.5 V reference was in range */
 /* result access for the UI */
 int measure_resistors(void);
 void measure_resistor(int i, uint8_t *a, uint8_t *b, uint32_t *value, int8_t *scale);
+int measure_inductor(uint32_t *value, int8_t *scale);     /* 1: the single resistor has inductance */
 /* text result for any component: title + up to MRES_LINES lines of at most 16 characters */
 #define MRES_LINES 6
 struct mres {

@@ -103,3 +103,27 @@ uint8_t GetOffsetIndex(uint8_t Probe1, uint8_t Probe2)
 
   return Index;
 }
+
+/* from user.c */
+uint32_t RescaleValue(uint32_t Value, int8_t Scale, int8_t NewScale)
+{
+  uint32_t          NewValue;      /* return value */
+
+  NewValue = Value;           /* take old value */
+
+  while (Scale != NewScale)   /* processing loop */
+  {
+    if (NewScale > Scale)     /* upscale */
+    {
+      NewValue /= 10;
+      Scale++;
+    }
+    else                      /* downscale */
+    {
+      NewValue *= 10;
+      Scale--;
+    }
+  }
+
+  return NewValue;
+}

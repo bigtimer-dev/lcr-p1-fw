@@ -158,6 +158,8 @@ class Board:
         self.vdrive = self.vcc                  # probe pins drive to the ADC full scale (4.39 V seen on the meter was the stale-sample artifact)
         self.adc_dat, self.adc_pending = 0, None    # data register; (time, value) of the running conversion
         self.esr = {}                           # {(probe_a, probe_b): ohms} series resistance of self.caps
+        self.ind = {}                           # {(probe_a, probe_b): henries} in series with self.dut[pair]
+        self.tc_arm = 0                         # time the capture got enabled (CCER)
 
     def pin(self, port, n):
         return self.out[port] >> n & 1
@@ -215,6 +217,8 @@ class Board:
             if v & 1 and not self.tc_run:
                 self.tc_t0, self.tc_ovf = max(self.us, self.ms * 1000), 0
             self.tc_run = bool(v & 1)
+        if a == TC_BASE + 0x20 and v & 1 and not self.reg.get(a, 0) & 1:
+            self.tc_arm = max(self.us, self.ms * 1000)
         self.reg[a] = v
         if base in PORTS and off in (0x14, 0x18, 0x28):
             p = PORTS[base]
@@ -384,7 +388,17 @@ class Board:
         self.us = now + dt
         self.settle()
         ctrl, ref = self.reg.get(COMP_BASE + 0x10, 0), self.reg.get(COMP_BASE + 0x40, 0)
-        if ctrl & 1 and ctrl >> 1 & 7 == 7 and ctrl >> 7 & 15 == 6 and ref & 1 and not self.tc_sts & 2:
+        if ctrl & 1 and ctrl >> 1 & 7 == 7 and ctrl >> 7 & 15 == 6 and ref & 1 and not self.tc_sts & 2 \
+                and any(n in pair for pair in self.ind for n in [ctrl >> 4 & 7]):
+            n = ctrl >> 4 & 7
+            vref = self.vcc * (ref >> 1 & 63) / 64
+            if self.driven(*self.PROBE_PINS[n][0]) == (True, 0):
+                vref *= 0.83                        # sense pin as shunt at ~60 mA: trips early (fitted to the meter)
+            tx = self.ind_cross(n, vref)            # us after the timer start, None: never
+            if tx is not None and self.tc_t0 + tx <= self.us and self.tc_t0 + tx >= self.tc_arm:
+                self.tc_ccr = int((tx + 0.21) * 48) & 0xFFFF    # + pin/comparator/capture delay (meter: 10 ticks)
+                self.tc_sts |= 2
+        elif ctrl & 1 and ctrl >> 1 & 7 == 7 and ctrl >> 7 & 15 == 6 and ref & 1 and not self.tc_sts & 2:
             n = ctrl >> 4 & 7
             vref = self.vcc * (ref >> 1 & 63) / 64
             if v0[n] < vref <= self.v_nodes[n]:
@@ -402,6 +416,29 @@ class Board:
         if ovf > self.tc_ovf:
             self.tc_sts |= 1
             self.tc_ovf = ovf
+
+    def ind_cross(self, n, vref):
+        """Inductor (in series with its dut resistance) switched on at the timer start, current zero before:
+        node n moves from its value with the inductor open to the DC value with the time constant
+        L / (R_L + resistance seen by the inductor). First-order model, node capacitances ignored."""
+        (a, b), L = next(iter(self.ind.items()))
+        g, i, links = self.drive_state()
+        def solve(lk, inj=None):
+            G = [[0.0] * 3 for _ in range(3)]
+            for k in range(3):
+                G[k][k] += g[k]
+            for (p, q), r in lk.items():
+                x = 1 / r
+                G[p][p] += x; G[q][q] += x; G[p][q] -= x; G[q][p] -= x
+            return solve3(G, inj if inj else list(i))
+        v_end = solve(links)[n]
+        open_links = {k: r for k, r in links.items() if k != (a, b)}
+        v_start = solve(open_links)[n]
+        th = solve(open_links, [(1.0 if k == a else -1.0 if k == b else 0.0) for k in range(3)])
+        tau = L / (self.dut[(a, b)] + th[a] - th[b]) * 1e6
+        if not v_start < vref < v_end:
+            return 0.0 if v_start >= vref else None
+        return -tau * math.log(1 - (vref - v_start) / (v_end - v_start))
 
     def cap_matrix(self):
         C = [[0.0] * 3 for _ in range(3)]
@@ -468,6 +505,10 @@ class Board:
             v = self.tc_sts
         elif a == TC_BASE + 0x34:
             v = self.tc_ccr
+        elif a == TC_BASE + 0x24:                       # vendor TIM3 counter (48 MHz): 0.25 us per read
+            if self.tc_run:
+                self.us = max(self.us, self.ms * 1000) + 0.25
+            v = int((max(self.us, self.ms * 1000) - self.tc_t0) * 48) & 0xFFFF if self.tc_run else 0
         elif a == 0x40012008:
             v = 0x02                                    # SPI: TX empty, not busy
         elif a == 0x40013800:                           # USART1 status: TX empty, RXNE, ORE
@@ -749,8 +790,9 @@ if LOWBAT:                                              # second pass: battery d
     sys.exit(1 if fails else 0)
 
 # --- measurements: TEST runs a ComponentTester probing cycle on the modelled probe network
-def measure(dut, max_ms=8000, devs=(), caps=None, esr=None):
+def measure(dut, max_ms=8000, devs=(), caps=None, esr=None, ind=None):
     bd.dut = dict(dut)
+    bd.ind = dict(ind or {})
     bd.devs = list(devs)
     bd.caps = dict(caps or {})
     bd.esr = dict(esr or {})
@@ -834,6 +876,26 @@ def esr_tests():
               [l for l in out.splitlines() if 'ESR' in l][-3:])
     bd.caps, bd.esr = {}, {}
 
+def ind_tests():
+    """inductor.c: L from the current rise time (first-order model in Board.ind_cross)"""
+    for pair, henries, ohms in (((0, 1), 10e-3, 30.0), ((0, 2), 1e-3, 3.0), ((1, 2), 100e-6, 0.5),
+                                ((0, 1), 47e-3, 120.0)):
+        out, _ = measure({pair: ohms}, ind={pair: henries})
+        r = [l for l in out.splitlines() if l.startswith('#R L ')]
+        v = int(r[0].split()[2]) * 10 ** int(r[0].split()[3][1:]) if r else None
+        if henries == 10e-3:
+            bd.lcd.png(os.path.join(OUTDIR, 'screen_inductor.png'))
+        check(f'inductor {henries:g} H + {ohms:g} Ohm reads {v}', v is not None and abs(v - henries) <= 0.1 * henries,
+              [l for l in out.splitlines() if l.startswith(('#C L', '#R'))][-6:])
+    for ohms in (100, 10):
+        out, _ = measure({(0, 1): ohms})
+        check(f'plain {ohms} Ohm resistor: no inductance', '#R L ' not in out and '#R R 1-2' in out, out[-200:])
+    bd.ind = {}
+
+if os.environ.get('IND_ONLY'):
+    ind_tests()
+    sys.exit(0)
+
 if os.environ.get('ESR_ONLY'):
     esr_tests()
     sys.exit(0)
@@ -851,6 +913,7 @@ for pair, farads, tol in (((0, 2), 100e-12, 0.05), ((1, 2), 10e-9, 0.03), ((0, 1
 bd.caps = {}
 
 esr_tests()
+ind_tests()
 
 out, _ = measure({}, devs=[("D", 0, 2)])
 r = result(out)
@@ -979,12 +1042,12 @@ check('diag: probes shorted again afterwards', bd.pin('B', 3) == 0)
 bd.dut = {}
 
 # --- ZENER: logged, HV stays off
-bd.set_in('F', 7, 0)
-run_ms(100)
+bd.set_in('F', 7, 0)                    # 300 ms presses: emulated LCD drawing is ~16x slower than on the
+run_ms(300)                             # meter, the page-1 redraw alone can swallow a 100 ms press
 bd.set_in('F', 7, 1)
 run_ms(400)
 bd.set_in('F', 7, 0)
-run_ms(100)
+run_ms(300)
 bd.set_in('F', 7, 1)
 run_ms(400)
 s = uart_text()
@@ -1020,9 +1083,9 @@ uart_text(); send(b'T?DX\x00\xffT\n'); run_ms(300)
 s = uart_text()
 check('stray bytes without "#" are ignored', '#R' not in s and '#?' not in s and '#D' not in s, s[-120:])
 bd.uart_rx += b'#?\n' * 30; run_ms(200)                  # unpaced burst: overruns
-uart_text(); send(b'#?\n'); run_ms(50)
+uart_text(); send(b'#?\n'); run_ms(300)              # replies wait for the 1 s ADC/screen update (slow here)
 check('reception recovers after an overrun', '#? ' in uart_text())
-uart_text(); send(b'#S15\n'); run_ms(50)
+uart_text(); send(b'#S15\n'); run_ms(300)
 _t = uart_text(); check('#S sets the ADC sample time', '#S 15' in _t and (bd.reg.get(0x40020810, 0) & 15) in (14, 15), repr(_t[-300:]))
 
 # --- sweep over sample times with 1M on 1-3
@@ -1033,9 +1096,9 @@ check('#W sweep measures with codes 12..15', '#W end' in s and s.count('found=10
 bd.dut = {}
 
 # --- serial status
-send(b'#?\n')
-run_ms(50)
-s = uart_text()
+uart_text(); send(b'#?\n')
+run_ms(300)
+s = ''.join(l for l in uart_text().splitlines(True) if l.startswith('#? '))
 check('serial "?" status reply', s.startswith('#? ') and 'relay=0' in s, s)
 
 # --- long TEST: power off

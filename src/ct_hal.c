@@ -198,6 +198,63 @@ uint32_t ct_cap_charge(uint8_t channel, uint8_t ddr, uint16_t max_ovf)
     return ticks | ovf << 16;
 }
 
+/* Inductors (inductor.c MeasureInductance): probe-1 is an output, still low, probe-2 pulled down directly
+ * or via Rl. Probe-1 is switched high and TIM3 counts until the current through the inductor raises
+ * probe-2 above VREF1 (COMP1). arm_us > 0: the capture is armed only that long after the switch-on, so the
+ * capacitive spike of large inductors is not taken; the time still counts from the switch-on. Probe-1 is
+ * driven low again right after the capture (the current then decays through both pins: no flyback spike).
+ * Returns ticks (48 MHz) | overflows << 16, UINT32_MAX after max_ovf overflows. */
+uint32_t ct_ind_charge(uint8_t channel, uint8_t pin1, uint8_t arm_us, uint16_t max_ovf)
+{
+    unsigned id = pin1 & 1 ? 0 : pin1 & 2 ? 1 : 2;
+    uint32_t port = a_pins[id].port, on = 1u << a_pins[id].pin, off = on << 16;
+    CMP_INVREF = 1u | (uint32_t)CT_COMP_VREF << 1;
+    CMP1_CTRL = 1u | 7u << 1 | (uint32_t)channel << 4 | 6u << 7;
+    TC_CR1 = TC_C1SEL;
+    TC_PSC = 0;
+    TC_ARR = 0xFFFF;
+    TC_CCMR1 = 1;
+    TC_CCER = arm_us ? 0 : 1;
+    TC_EGR = 1;
+    TC_CNT = 0;
+    ct_wait_us(20);                                     /* comparator start-up */
+    TC_STS = 0;
+    a_port |= pin1;
+    uint32_t sts, ovf = 0, ticks;
+    __asm volatile("cpsid i" ::: "memory");             /* switch-on and timer start back to back */
+    TC_CR1 = TC_C1SEL | 1;
+    GP_BSC(port) = on;
+    if (arm_us) {
+        while (TC_CNT < 48u * arm_us)
+            ;
+        TC_STS = 0;
+        TC_CCER = 1;
+    }
+    __asm volatile("cpsie i" ::: "memory");
+    for (;;) {
+        sts = TC_STS;
+        if (sts & 2)
+            break;
+        if (sts & 1) {
+            TC_STS = ~1u;
+            if (++ovf == max_ovf)
+                break;
+            if (!(ovf & 63))
+                wdt_feed();
+        }
+    }
+    GP_BSC(port) = off;                                 /* stop the current rise */
+    TC_CR1 = TC_C1SEL;
+    ticks = TC_CCR1 & 0xFFFF;
+    if ((sts & 2) && (TC_STS & 1) && ticks < 0x8000)
+        ovf++;
+    TC_STS = 0;
+    TC_CCER = 0;
+    CMP1_CTRL = 0;
+    CMP_INVREF = 0;
+    return sts & 2 ? ticks | ovf << 16 : UINT32_MAX;
+}
+
 /* ---- ESR (cap.c MeasureESR) ----
  * Upstream samples the voltage at the cap in the middle of a 2-4 us current pulse via Rl, timed to the AVR
  * ADC clock. Here: sample code 0 ends its sampling ESR_KS delay-loop runs after the start command (measured

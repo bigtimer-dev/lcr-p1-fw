@@ -13,7 +13,7 @@ then press **TEST** to enter update mode at any time, so stock firmware can alwa
 
 ## Status
 
-Version 0.7 runs on the meter and measures with ComponentTester's algorithms:
+Version 0.8 runs on the meter and measures with ComponentTester's algorithms:
 
 | | |
 |---|---|
@@ -22,9 +22,10 @@ Version 0.7 runs on the meter and measures with ComponentTester's algorithms:
 | diodes | forward voltage, anti-parallel pairs |
 | BJTs | NPN / PNP, pinout, hFE, Iceo |
 | FETs | pinout, gate threshold (Vth) |
+| inductors | from about 20 µH, when the coil is below 2 kΩ (shown with its resistance) |
 | self-adjustment | R0 (probe resistance), RiL / RiH (MCU pin resistance), C0 (probe capacitance) |
 
-Not done yet: Zener test (the HV boost is never switched on), IR decoding, inductors.
+Not done yet: Zener test (the HV boost is never switched on), IR decoding.
 
 Typical test times: empty socket 1.1 s, resistor 1.2 s, 330 µF electrolytic 5.6 s (large caps need time to
 charge and discharge).
@@ -46,6 +47,16 @@ timer delays are replaced by GPIO writes timed against the measured sampling ins
 (`#E`, debug build), and the result is computed from the full voltage divider instead of upstream's
 small-ESR approximation (with 2 kΩ in series: 1913 Ω instead of 504 Ω). Low ESR readings agree with a
 DE-5000 at 10 kHz; near 0 Ω repeated readings vary by about 0.1 Ω.
+
+### Inductors
+
+As upstream: probe-1 is switched high and the time until the current through the coil (on Rl, or for
+coils below 40 Ω on the pin's own resistance) reaches the comparator threshold gives L. The comparator
+and timer are COMP1 and TIM3 at 48 MHz. Two corrections were fitted on the meter: 10 timer ticks of fixed
+delay, and the threshold scaled by 0.83 in the high-current mode, where the pin reaches it sooner than
+its resistance at low current predicts. Checked on the meter: 50 µH reads 47.2 µH, 36 µH reads 34.4 µH,
+2.2 mH reads 2.30 mH; plain resistors (0 Ω, 10 Ω, 2 kΩ) show no inductance. Coils above 40 Ω (the
+low-current mode) are not checked on the meter yet.
 
 ### Serial port
 

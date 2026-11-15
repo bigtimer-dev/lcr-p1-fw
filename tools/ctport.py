@@ -19,7 +19,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 UP = os.path.join(ROOT, 'ct', 'upstream')
 OUT = os.path.join(ROOT, 'ct', 'ported')
-FILES = ['probes.c', 'resistor.c', 'semi.c', 'cap.c', 'common.h', 'variables.h', 'functions.h', 'config_support.h',
+FILES = ['probes.c', 'resistor.c', 'semi.c', 'cap.c', 'inductor.c', 'common.h', 'variables.h', 'functions.h', 'config_support.h',
          'colors.h'] + sorted(f for f in os.listdir(UP) if f.startswith('var_') and f.endswith('.h'))
 PORT_STMT = re.compile(r'\b(R_DDR|R_PORT|ADC_DDR|ADC_PORT)\s*(\|=|&=|=(?!=))\s*([^;]*?)\s*;')
 PIN_READ = re.compile(r'\bADC_PIN\b')
@@ -46,6 +46,42 @@ EDITS = [
 # The start marker must be unique, or with n given its n-th occurrence (0 = first) is used;
 # the end marker is its first occurrence after the start.
 PATCHES = [
+    ('inductor.c',
+     '    Value += Offset;                              /* +/- offset */\n',
+     '    Value += Offset;                              /* +/- offset */\n',
+     '    Value += Offset;                              /* +/- offset */\n'
+     '    /* LCR-P1: in high current mode the pin itself is the shunt; at about 60 mA it reaches U_ref\n'
+     '       sooner than RiL (measured at low current) says. Fitted on the meter: 50 uH, 36 uH, 2.2 mH. */\n'
+     '    if (!(Mode & MODE_LOW_CURRENT)) Value = Value * 83 / 100;\n'),
+    ('inductor.c',
+     '      if (Counter <= 100)          /* time <= 100ns */\n',
+     '      if (Counter <= 100)          /* time <= 100ns */\n',
+     '      /* LCR-P1: a plain resistor trips the comparator after 230-310 ns here (pin, comparator and\n'
+     '         capture delays; measured: 10 Ohm 250 ns, a 36 uH coil 670 ns) */\n'
+     '      if (Counter <= 350)          /* time <= 350ns */\n'),
+    ('inductor.c',
+     '  /* set up analog comparator */\n',
+     '    *Time = Counter;               /* save time */\n',
+     '  /* LCR-P1: COMP1 compares probe-2 with VREF1 (Cfg.Bandgap), TIM3 counts at 48 MHz from the switch-on\n'
+     '     of probe-1 to the crossing (src/ct_hal.c ct_ind_charge). Delayed start: the capture is armed 4 us\n'
+     '     after the switch-on (skips the capacitive spike of large inductors), the time counts from it. */\n'
+     '  wdt_reset();                          /* reset watchdog */\n'
+     '  Counter = ct_ind_charge(Probes.Ch_2, Probes.Pin_1, (Mode & MODE_DELAYED_START) ? 4 : 0, CPU_FREQ / 250000);\n'
+     '  (void)Test;\n'
+     '  /* cut off: Gnd -- Rl -- probe-2 / probe-1 -- Rl -- Gnd */\n'
+     '  R_DDR = Probes.Rl_2 | Probes.Rl_1;\n'
+     '  ADC_DDR = 0;\n'
+     '  if (Counter == UINT32_MAX) Flag = 0;  /* timeout */\n'
+     '  Ticks_L = (uint16_t)Counter;\n'
+     '  Ticks_H = (uint16_t)(Counter >> 16);\n'
+     '  if (Flag)                   /* got valid measurement */\n'
+     '  {\n'
+     '    Counter = (uint32_t)Ticks_L | (uint32_t)Ticks_H << 16;\n'
+     '    Offset = 10;              /* pin, comparator and capture delay: a 10 Ohm resistor reads 12 ticks */\n'
+     '    if (Counter > Offset) Counter -= Offset;\n'
+     '    else Counter = 0;\n'
+     '    Counter = (Counter * 125 + 3) / 6;    /* 48 MHz ticks to ns */\n'
+     '    *Time = Counter;               /* save time */\n'),
     ('probes.c',
      '    else                                /* go for another round */\n',
      '      MilliSleep(50);                   /* wait for 50ms */\n    }\n',
@@ -198,6 +234,8 @@ PATCHES = [
 # A line starting with '<' goes BEFORE the anchor (use it for anchors that are if/while headers:
 # a statement inserted after such a header becomes its body and changes the program).
 DEBUG = [
+    ('inductor.c', '  if (Counter == UINT32_MAX) Flag = 0;  /* timeout */\n',
+     '<  CT_DBG("#C L %u-%u mode=%u ticks=%u\\r\\n", Probes.ID_1 + 1, Probes.ID_2 + 1, Mode, (unsigned)Counter);\n'),
     ('probes.c', '  if (U_Rl > 15)         /* > 21µA */\n',
      '<  CT_DBG("#C Probes %u-%u-%u U_Rl=%u\\r\\n", Probes.ID_1 + 1, Probes.ID_2 + 1, Probes.ID_3 + 1, U_Rl);\n'),
     ('cap.c', '  if (Ticks2 >= (CPU_FREQ / 5000)) Flag = 1;\n',
@@ -243,7 +281,7 @@ def patch(name, text):
 
 # single functions taken from upstream files whose remaining code is not used (yet)
 EXTRACT = [('user.c', 'uint8_t NumberOfDigits('), ('user.c', 'int8_t CmpValue('),
-           ('adjust.c', 'uint8_t GetOffsetIndex(')]
+           ('adjust.c', 'uint8_t GetOffsetIndex('), ('user.c', 'uint32_t RescaleValue(')]
 
 
 def extract():

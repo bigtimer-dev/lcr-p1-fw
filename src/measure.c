@@ -159,6 +159,15 @@ void measure_resistor(int i, uint8_t *a, uint8_t *b, uint32_t *value, int8_t *sc
     *scale = Resistors[i].Scale;
 }
 
+static uint8_t has_l;
+
+int measure_inductor(uint32_t *value, int8_t *scale)
+{
+    *value = Inductor.Value;
+    *scale = Inductor.Scale;
+    return has_l;
+}
+
 void measure_format(char *out, int size, uint32_t value, int8_t scale, const char *unit)
 {
     static const char pfx[] = "pnum kMG";               /* 10^-12 .. 10^9 */
@@ -322,6 +331,7 @@ static void describe(struct mres *r)
 {
     r->n = 0;
     r->title[0] = 0;
+    has_l = 0;
     switch (Check.Found) {
     case COMP_NONE:
         fmt(r->title, sizeof r->title, "no component");
@@ -329,8 +339,9 @@ static void describe(struct mres *r)
     case COMP_ERROR:
         fmt(r->title, sizeof r->title, "error");
         break;
-    case COMP_RESISTOR:
-        fmt(r->title, sizeof r->title, Check.Resistors > 1 ? "Resistors" : "Resistor");
+    case COMP_RESISTOR:                         /* upstream Show_Resistor: L of a single one below 2k */
+        has_l = Check.Resistors == 1 && MeasureInductor(&Resistors[0]) == 1;
+        fmt(r->title, sizeof r->title, has_l ? "Inductor" : Check.Resistors > 1 ? "Resistors" : "Resistor");
         break;
     case COMP_CAPACITOR:
         describe_cap(r);
