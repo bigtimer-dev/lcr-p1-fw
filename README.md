@@ -17,7 +17,7 @@ then press **TEST** to enter update mode at any time, so stock firmware can alwa
 |---|---|---|
 | 0 | hardware map | done |
 | 1 | bring-up: clock, power latch, LCD, keys, mode switch, relay, buzzer, backlight, USB serial, watchdog | done, runs on the meter |
-| 2 | measurement core: ADC, probe layer + ComponentTester resistor check done; C, diodes, transistors next | in progress |
+| 2 | measurement core: ADC + probe layer + ComponentTester resistors verified on the meter (10R, 360R, 1M, all socket pairs); C, diodes, transistors next | in progress |
 | 3 | IR decoding, serial protocol, UI polish | |
 
 Phase 1 shows the key, switch and relay states. TEST toggles the relay, ZENER beeps (the HV boost is never
