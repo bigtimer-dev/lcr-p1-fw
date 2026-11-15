@@ -151,10 +151,8 @@ class Board:
         elif a == 0x40020850:
             ch = self.reg.get(0x40020838, 0) & 31
             v = self.probe_adc(ch) if ch in (1, 3, 6) else self.adc.get(ch, 0)
-            if self.adc_last and self.adc_last[0] != ch:    # hardware: first conversion after a
-                v, self.adc_last = self.adc_last[1], (ch, v)  # channel switch is the old channel's
-            else:
-                self.adc_last = (ch, v)
+            # hardware: the data register returns the previous conversion's result (one-deep lag)
+            v, self.adc_last = (self.adc_last[1] if self.adc_last else 0), (ch, v)
         elif a == 0x40000824:                           # TIM3 counter: 1 us per read, never behind the ms tick
             self.us = max(self.us + 1, self.ms * 1000)
             v = self.us & 0xFFFF
