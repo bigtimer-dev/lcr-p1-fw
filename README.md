@@ -16,7 +16,7 @@ then press **TEST** to enter update mode at any time, so stock firmware can alwa
 | Phase | | |
 |---|---|---|
 | 0 | hardware map | done |
-| 1 | bring-up: clock, power latch, LCD, keys, mode switch, relay, buzzer, backlight, USB serial | **this** |
+| 1 | bring-up: clock, power latch, LCD, keys, mode switch, relay, buzzer, backlight, USB serial, watchdog | done, runs on the meter |
 | 2 | measurement core (probes, ADC, R / C / diode / transistor ...) | next |
 | 3 | IR decoding, serial protocol, UI polish | |
 
