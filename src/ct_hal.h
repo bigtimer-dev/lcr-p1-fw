@@ -24,7 +24,10 @@ uint8_t ADC_PORT_get(void);
 uint8_t ADC_PIN_get(void);              /* probe levels (threshold VDD/2) */
 
 uint32_t ct_adc_read(uint8_t channel, uint8_t samples);    /* upstream channel number; sum of 12-bit codes */
-unsigned ct_adc_channel(uint8_t channel);                  /* upstream -> N32 ADC channel */
+unsigned ct_adc_channel(uint8_t channel);
+uint16_t ct_adc_poll(uint8_t channel);                     /* one fast 12-bit reading (sample code ct_poll_code) */
+extern uint8_t ct_poll_code;
+uint16_t ct_us(void);                                      /* free-running us counter */                  /* upstream -> N32 ADC channel */
 
 /* delays (µs timer: TIM3 at 1 MHz) */
 void ct_wait_us(uint16_t us);

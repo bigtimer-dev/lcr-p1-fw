@@ -45,15 +45,20 @@ static uint32_t convert(void)
     return ADC_DAT & 0xFFF;
 }
 
-uint32_t adc_raw(unsigned ch, unsigned n)
+uint32_t adc_raw_st(unsigned ch, unsigned n, unsigned st)
 {
-    select(ch, adc_sample_code);
+    select(ch, st);
     (void)convert();                            /* the data register lags one conversion behind (seen on
                                                    the meter): the first result of every read is stale */
     uint32_t sum = 0;
     while (n--)
         sum += convert();
     return sum;
+}
+
+uint32_t adc_raw(unsigned ch, unsigned n)
+{
+    return adc_raw_st(ch, n, adc_sample_code);
 }
 
 uint32_t adc_mv(unsigned ch, unsigned n)

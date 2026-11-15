@@ -614,9 +614,11 @@ void GetGateThreshold(uint8_t Type)
       wdt_reset();                       /* reset watchdog */
       PullProbe(Probes.Rl_3, PullMode);  /* discharge gate via Rl for 10 ms */
       R_DDR_set(Drain_Rl | Probes.Rh_3);    /* pull up/down gate via Rh to slowly charge gate */
+      uint16_t T0 = ct_us();
+      (void)T0;
       for (Timeout = 0; Timeout < 50000; Timeout++)   /* about 1 s */
       {
-        uint8_t High = ct_adc_read(Drain_Ch, 1) >= 2048;
+        uint8_t High = ct_adc_poll(Drain_Ch) >= 2048;
         if ((Type & TYPE_N_CHANNEL) ? !High : High) break;
       }
       R_DDR_set(Drain_Rl);                  /* set probe-3 to HiZ mode */
@@ -628,7 +630,7 @@ void GetGateThreshold(uint8_t Type)
         else
           Ugs += (int32_t)U_g - (int32_t)Cfg.Vcc;   /* Ugs = - (Vcc - U_g) */
       }
-      CT_DBG("#C   n=%u t=%u Ug=%u\r\n", Counter, (unsigned)Timeout, (unsigned)(ct_adc_read(Probes.Ch_3, 1) * (uint32_t)ct_adc_fs_mv / 4096));
+      CT_DBG("#C   n=%u t=%u us=%u Ug=%u\r\n", Counter, (unsigned)Timeout, (uint16_t)(ct_us() - T0), (unsigned)(ct_adc_read(Probes.Ch_3, 1) * (uint32_t)ct_adc_fs_mv / 4096));
       Done++;
     }
     Ugs = Done ? Ugs / Done : 0;     /* average */

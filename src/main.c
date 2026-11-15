@@ -288,6 +288,8 @@ int main(void)
                 }
                 adc_sample_code = keep;
                 uprintf("#W end\r\n");
+            } else if (k == 'P' && arg <= 15) {
+                ct_poll_code = (uint8_t)arg, uprintf("#P %u\r\n", arg);
             } else if (k == 'S' && arg <= 15)
                 adc_sample_code = (uint8_t)arg, uprintf("#S %u\r\n", arg);
             else if (k == '?')

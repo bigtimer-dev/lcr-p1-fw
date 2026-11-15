@@ -58,6 +58,18 @@ uint32_t ct_adc_read(uint8_t channel, uint8_t samples)
     return adc_raw(ct_adc_channel(channel), samples);
 }
 
+/* Fast level poll of a low-impedance node (e.g. a drain on Rl) for busy loops: short sample time */
+uint8_t ct_poll_code = 4;
+uint16_t ct_adc_poll(uint8_t channel)
+{
+    return (uint16_t)adc_raw_st(ct_adc_channel(channel), 1, ct_poll_code);
+}
+
+uint16_t ct_us(void)
+{
+    return (uint16_t)R32(0x40000800u + 0x24);           /* TIM3 counter, 1 MHz */
+}
+
 /* Probe pins have no digital input in analog mode: read the level with the ADC instead. */
 uint8_t ADC_PIN_get(void)
 {
