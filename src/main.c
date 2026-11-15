@@ -84,6 +84,38 @@ static void probe_diag(void)
 /* serial 'X': why do the probe pins drive high only to ~87 % of the ADC full scale? Drive probe 1
    (PA1) high with probes 2/3 floating and read it; then apply, one at a time, the port A values the
    stock firmware writes (output type, +0x08, drive strength +0x2C) and read again. */
+/* #G: FET switching trace with G = probe 1 (Rh up), D = probe 2 (Rl up), S = probe 3 (low).
+   Gate first discharged via Rl for 10 ms; then gate/drain sampled with the fast poll read. */
+static void gate_trace(void)
+{
+    static uint16_t tg[80], vg[80], vd[80];
+    ADC_DDR_set(0);                             /* relay on: probes free */
+    MilliSleep(20);
+    ADC_PORT_set(0);
+    ADC_DDR_set(1 << 2);                        /* source (probe 3) low directly */
+    R_PORT_set(1 << 2);                         /* drain Rl (probe 2) high */
+    R_DDR_set(1 << 2 | 1 << 0);                 /* + gate Rl (probe 1) low: discharge */
+    MilliSleep(10);
+    R_PORT_set(1 << 2 | 1 << 1);                /* gate via Rh high */
+    R_DDR_set(1 << 2 | 1 << 1);
+    uint16_t t0 = ct_us();
+    for (int i = 0; i < 80; i++) {
+        tg[i] = (uint16_t)(ct_us() - t0);
+        vd[i] = ct_adc_poll(1);
+        vg[i] = ct_adc_poll(0);
+        for (uint16_t w = ct_us(); (uint16_t)(ct_us() - w) < 40; )
+            ;
+    }
+    R_DDR_set(1 << 2);                          /* gate HiZ */
+    uint16_t hold = (uint16_t)ct_adc_read(0, 1);
+    R_DDR_set(0);
+    R_PORT_set(0);
+    ADC_DDR_set(1 << 4);                        /* probes shorted again */
+    for (int i = 0; i < 80; i++)
+        uprintf("#G %u us G=%u D=%u\r\n", tg[i], vg[i] * 4993u / 4096, vd[i] * 4993u / 4096);
+    uprintf("#G gate after HiZ (code %u) = %u mV\r\n", adc_sample_code, hold * 4993u / 4096);
+}
+
 static void drive_experiment(void)
 {
     ADC_DDR_set(0);
@@ -268,6 +300,8 @@ int main(void)
                 c_test = 1;                     /* run a test */
             else if (k == 'D')
                 probe_diag();
+            else if (k == 'G')
+                gate_trace();
             else if (k == 'X')
                 drive_experiment();
             else if (k == 'W') {                /* sweep: measure with sample time codes 12..15 */

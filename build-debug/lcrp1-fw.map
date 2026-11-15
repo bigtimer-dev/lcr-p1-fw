@@ -417,7 +417,7 @@ LOAD build-debug/ct_ct_extract.o
 LOAD /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a
                 0x20001ff8                        _estack = 0x20001ff8
 
-.text           0x08001800     0x5a24
+.text           0x08001800     0x5b54
  *(.vectors)
  .vectors       0x08001800       0xc0 build-debug/startup.o
                 0x08001800                vectors
@@ -579,258 +579,259 @@ LOAD /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a
  .text.header   0x080025e0       0x84 build-debug/main.o
  .text.off      0x08002664       0x80 build-debug/main.o
  .text.startup.main
-                0x080026e4      0x97c build-debug/main.o
+                0x080026e4      0xa70 build-debug/main.o
                 0x080026e4                main
  .text.mv.constprop.0
-                0x08003060       0x40 build-debug/measure.o
+                0x08003154       0x40 build-debug/measure.o
  .text.add.constprop.0
-                0x080030a0       0x20 build-debug/measure.o
+                0x08003194       0x20 build-debug/measure.o
  .text.pinout.constprop.0
-                0x080030c0       0x4c build-debug/measure.o
+                0x080031b4       0x4c build-debug/measure.o
  .text.diode_line.constprop.0
-                0x0800310c       0x40 build-debug/measure.o
+                0x08003200       0x40 build-debug/measure.o
  .text.measure_init
-                0x0800314c       0x40 build-debug/measure.o
-                0x0800314c                measure_init
+                0x08003240       0x40 build-debug/measure.o
+                0x08003240                measure_init
  .text.measure_result
-                0x0800318c        0x8 build-debug/measure.o
-                0x0800318c                measure_result
+                0x08003280        0x8 build-debug/measure.o
+                0x08003280                measure_result
  .text.measure_vcc
-                0x08003194        0xc build-debug/measure.o
-                0x08003194                measure_vcc
+                0x08003288        0xc build-debug/measure.o
+                0x08003288                measure_vcc
  .text.measure_adc_fs
-                0x080031a0        0xc build-debug/measure.o
-                0x080031a0                measure_adc_fs
+                0x08003294        0xc build-debug/measure.o
+                0x08003294                measure_adc_fs
  .text.measure_ref_ok
-                0x080031ac       0x10 build-debug/measure.o
-                0x080031ac                measure_ref_ok
+                0x080032a0       0x10 build-debug/measure.o
+                0x080032a0                measure_ref_ok
  .text.measure_resistors
-                0x080031bc       0x14 build-debug/measure.o
-                0x080031bc                measure_resistors
+                0x080032b0       0x14 build-debug/measure.o
+                0x080032b0                measure_resistors
  .text.measure_resistor
-                0x080031d0       0x3c build-debug/measure.o
-                0x080031d0                measure_resistor
+                0x080032c4       0x3c build-debug/measure.o
+                0x080032c4                measure_resistor
  .text.measure_format
-                0x0800320c      0x108 build-debug/measure.o
-                0x0800320c                measure_format
+                0x08003300      0x108 build-debug/measure.o
+                0x08003300                measure_format
  .text.value_line.constprop.0
-                0x08003314       0x30 build-debug/measure.o
+                0x08003408       0x30 build-debug/measure.o
  .text.measure_run
-                0x08003344      0x518 build-debug/measure.o
-                0x08003344                measure_run
+                0x08003438      0x518 build-debug/measure.o
+                0x08003438                measure_run
  .text.Default_Handler
-                0x0800385c        0x2 build-debug/startup.o
- *fill*         0x0800385e        0x2 
- .text.Reset_Handler
-                0x08003860       0x48 build-debug/startup.o
-                0x08003860                Reset_Handler
- .text.uart_init
-                0x080038a8       0x5c build-debug/uart.o
-                0x080038a8                uart_init
- .text.uart_putc
-                0x08003904       0x28 build-debug/uart.o
-                0x08003904                uart_putc
- .text.put      0x0800392c       0x26 build-debug/uart.o
+                0x08003950        0x2 build-debug/startup.o
  *fill*         0x08003952        0x2 
- .text.vfmt     0x08003954      0x10c build-debug/uart.o
+ .text.Reset_Handler
+                0x08003954       0x48 build-debug/startup.o
+                0x08003954                Reset_Handler
+ .text.uart_init
+                0x0800399c       0x5c build-debug/uart.o
+                0x0800399c                uart_init
+ .text.uart_putc
+                0x080039f8       0x28 build-debug/uart.o
+                0x080039f8                uart_putc
+ .text.put      0x08003a20       0x26 build-debug/uart.o
+ *fill*         0x08003a46        0x2 
+ .text.vfmt     0x08003a48      0x10c build-debug/uart.o
  .text.uart_getc
-                0x08003a60       0x28 build-debug/uart.o
-                0x08003a60                uart_getc
- .text.uprintf  0x08003a88       0x1e build-debug/uart.o
-                0x08003a88                uprintf
- .text.fmt      0x08003aa6       0x2a build-debug/uart.o
-                0x08003aa6                fmt
+                0x08003b54       0x28 build-debug/uart.o
+                0x08003b54                uart_getc
+ .text.uprintf  0x08003b7c       0x1e build-debug/uart.o
+                0x08003b7c                uprintf
+ .text.fmt      0x08003b9a       0x2a build-debug/uart.o
+                0x08003b9a                fmt
  .text.UpdateProbes
-                0x08003ad0       0x58 build-debug/ct_probes.o
-                0x08003ad0                UpdateProbes
+                0x08003bc4       0x58 build-debug/ct_probes.o
+                0x08003bc4                UpdateProbes
  .text.UpdateProbes2
-                0x08003b28       0x10 build-debug/ct_probes.o
-                0x08003b28                UpdateProbes2
+                0x08003c1c       0x10 build-debug/ct_probes.o
+                0x08003c1c                UpdateProbes2
  .text.RestoreProbes
-                0x08003b38       0x14 build-debug/ct_probes.o
-                0x08003b38                RestoreProbes
+                0x08003c2c       0x14 build-debug/ct_probes.o
+                0x08003c2c                RestoreProbes
  .text.BackupProbes
-                0x08003b4c       0x14 build-debug/ct_probes.o
-                0x08003b4c                BackupProbes
+                0x08003c40       0x14 build-debug/ct_probes.o
+                0x08003c40                BackupProbes
  .text.DischargeProbes
-                0x08003b60      0x13c build-debug/ct_probes.o
-                0x08003b60                DischargeProbes
+                0x08003c54      0x13c build-debug/ct_probes.o
+                0x08003c54                DischargeProbes
  .text.PullProbe
-                0x08003c9c       0x52 build-debug/ct_probes.o
-                0x08003c9c                PullProbe
- *fill*         0x08003cee        0x2 
+                0x08003d90       0x52 build-debug/ct_probes.o
+                0x08003d90                PullProbe
+ *fill*         0x08003de2        0x2 
  .text.CheckProbes
-                0x08003cf0      0x1cc build-debug/ct_probes.o
-                0x08003cf0                CheckProbes
+                0x08003de4      0x1cc build-debug/ct_probes.o
+                0x08003de4                CheckProbes
  .text.CheckAlternatives
-                0x08003ebc       0x38 build-debug/ct_probes.o
-                0x08003ebc                CheckAlternatives
+                0x08003fb0       0x38 build-debug/ct_probes.o
+                0x08003fb0                CheckAlternatives
  .text.SmallResistor
-                0x08003ef4       0xe4 build-debug/ct_resistor.o
-                0x08003ef4                SmallResistor
+                0x08003fe8       0xe4 build-debug/ct_resistor.o
+                0x08003fe8                SmallResistor
  .text.CheckResistor
-                0x08003fd8      0x308 build-debug/ct_resistor.o
-                0x08003fd8                CheckResistor
+                0x080040cc      0x308 build-debug/ct_resistor.o
+                0x080040cc                CheckResistor
  .text.SemiPinDesignators
-                0x080042e0       0x68 build-debug/ct_semi.o
-                0x080042e0                SemiPinDesignators
+                0x080043d4       0x68 build-debug/ct_semi.o
+                0x080043d4                SemiPinDesignators
  .text.GetLeakageCurrent
-                0x08004348       0xc0 build-debug/ct_semi.o
-                0x08004348                GetLeakageCurrent
+                0x0800443c       0xc0 build-debug/ct_semi.o
+                0x0800443c                GetLeakageCurrent
  .text.SearchDiode
-                0x08004408       0x30 build-debug/ct_semi.o
-                0x08004408                SearchDiode
+                0x080044fc       0x30 build-debug/ct_semi.o
+                0x080044fc                SearchDiode
  .text.CheckDiode
-                0x08004438      0x1ec build-debug/ct_semi.o
-                0x08004438                CheckDiode
+                0x0800452c      0x1ec build-debug/ct_semi.o
+                0x0800452c                CheckDiode
  .text.VerifyMOSFET
-                0x08004624       0x34 build-debug/ct_semi.o
-                0x08004624                VerifyMOSFET
+                0x08004718       0x34 build-debug/ct_semi.o
+                0x08004718                VerifyMOSFET
  .text.GetGateThreshold
-                0x08004658      0x134 build-debug/ct_semi.o
-                0x08004658                GetGateThreshold
+                0x0800474c      0x134 build-debug/ct_semi.o
+                0x0800474c                GetGateThreshold
  .text.Get_hFE_C
-                0x0800478c      0x11c build-debug/ct_semi.o
-                0x0800478c                Get_hFE_C
+                0x08004880      0x11c build-debug/ct_semi.o
+                0x08004880                Get_hFE_C
  .text.CheckTransistor
-                0x080048a8      0x294 build-debug/ct_semi.o
-                0x080048a8                CheckTransistor
+                0x0800499c      0x294 build-debug/ct_semi.o
+                0x0800499c                CheckTransistor
  .text.CheckDepletionModeFET
-                0x08004b3c      0x3bc build-debug/ct_semi.o
-                0x08004b3c                CheckDepletionModeFET
+                0x08004c30      0x3bc build-debug/ct_semi.o
+                0x08004c30                CheckDepletionModeFET
  .text.CheckThyristorTriac
-                0x08004ef8      0x104 build-debug/ct_semi.o
-                0x08004ef8                CheckThyristorTriac
+                0x08004fec      0x104 build-debug/ct_semi.o
+                0x08004fec                CheckThyristorTriac
  .text.CheckPUT
-                0x08004ffc       0xa0 build-debug/ct_semi.o
-                0x08004ffc                CheckPUT
+                0x080050f0       0xa0 build-debug/ct_semi.o
+                0x080050f0                CheckPUT
  .text.CheckUJT
-                0x0800509c       0xe4 build-debug/ct_semi.o
-                0x0800509c                CheckUJT
+                0x08005190       0xe4 build-debug/ct_semi.o
+                0x08005190                CheckUJT
  .text.NumberOfDigits
-                0x08005180       0x18 build-debug/ct_ct_extract.o
-                0x08005180                NumberOfDigits
+                0x08005274       0x18 build-debug/ct_ct_extract.o
+                0x08005274                NumberOfDigits
  .text.CmpValue
-                0x08005198       0x70 build-debug/ct_ct_extract.o
-                0x08005198                CmpValue
- .text          0x08005208       0x14 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_thumb1_case_uqi.o)
-                0x08005208                __gnu_thumb1_case_uqi
- .text          0x0800521c       0x14 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_thumb1_case_shi.o)
-                0x0800521c                __gnu_thumb1_case_shi
- .text          0x08005230       0x8c /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_udivsi3.o)
-                0x08005230                __udivsi3
-                0x08005230                __aeabi_uidiv
-                0x080052a8                __aeabi_uidivmod
- .text          0x080052bc       0xa8 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_divsi3.o)
-                0x080052bc                __aeabi_idiv
-                0x080052bc                __divsi3
-                0x08005350                __aeabi_idivmod
- .text          0x08005364        0x4 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_dvmd_tls.o)
-                0x08005364                __aeabi_ldiv0
-                0x08005364                __aeabi_idiv0
+                0x0800528c       0x70 build-debug/ct_ct_extract.o
+                0x0800528c                CmpValue
+ .text          0x080052fc       0x14 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_thumb1_case_uqi.o)
+                0x080052fc                __gnu_thumb1_case_uqi
+ .text          0x08005310       0x14 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_thumb1_case_shi.o)
+                0x08005310                __gnu_thumb1_case_shi
+ .text          0x08005324       0x8c /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_udivsi3.o)
+                0x08005324                __udivsi3
+                0x08005324                __aeabi_uidiv
+                0x0800539c                __aeabi_uidivmod
+ .text          0x080053b0       0xa8 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_divsi3.o)
+                0x080053b0                __aeabi_idiv
+                0x080053b0                __divsi3
+                0x08005444                __aeabi_idivmod
+ .text          0x08005458        0x4 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_dvmd_tls.o)
+                0x08005458                __aeabi_ldiv0
+                0x08005458                __aeabi_idiv0
  *(.rodata*)
  .rodata.Channel_table
-                0x08005368        0x3 build-debug/ct_glue.o
-                0x08005368                Channel_table
+                0x0800545c        0x3 build-debug/ct_glue.o
+                0x0800545c                Channel_table
  .rodata.Pin_table
-                0x0800536b        0x3 build-debug/ct_glue.o
-                0x0800536b                Pin_table
+                0x0800545f        0x3 build-debug/ct_glue.o
+                0x0800545f                Pin_table
  .rodata.Rh_table
-                0x0800536e        0x3 build-debug/ct_glue.o
-                0x0800536e                Rh_table
+                0x08005462        0x3 build-debug/ct_glue.o
+                0x08005462                Rh_table
  .rodata.Rl_table
-                0x08005371        0x3 build-debug/ct_glue.o
-                0x08005371                Rl_table
+                0x08005465        0x3 build-debug/ct_glue.o
+                0x08005465                Rl_table
  .rodata.NV_Adjust_1
-                0x08005374        0xc build-debug/ct_glue.o
-                0x08005374                NV_Adjust_1
+                0x08005468        0xc build-debug/ct_glue.o
+                0x08005468                NV_Adjust_1
  .rodata.adc_ch
-                0x08005380        0x6 build-debug/ct_hal.o
- *fill*         0x08005386        0x2 
+                0x08005474        0x6 build-debug/ct_hal.o
+ *fill*         0x0800547a        0x2 
  .rodata.a_pins
-                0x08005388       0x18 build-debug/ct_hal.o
+                0x0800547c       0x18 build-debug/ct_hal.o
  .rodata.r_pins
-                0x080053a0       0x30 build-debug/ct_hal.o
+                0x08005494       0x30 build-debug/ct_hal.o
  .rodata.font24
-                0x080053d0        0xc build-debug/font_data.o
-                0x080053d0                font24
+                0x080054c4        0xc build-debug/font_data.o
+                0x080054c4                font24
  .rodata.font24_bits
-                0x080053dc     0x1260 build-debug/font_data.o
+                0x080054d0     0x1260 build-debug/font_data.o
  .rodata.font16
-                0x0800663c        0xc build-debug/font_data.o
-                0x0800663c                font16
+                0x08006730        0xc build-debug/font_data.o
+                0x08006730                font16
  .rodata.font16_bits
-                0x08006648      0x620 build-debug/font_data.o
+                0x0800673c      0x620 build-debug/font_data.o
  .rodata.init_seq
-                0x08006c68       0x69 build-debug/lcd.o
+                0x08006d5c       0x69 build-debug/lcd.o
  .rodata.header.str1.1
-                0x08006cd1      0x4fb build-debug/main.o
+                0x08006dc5      0x536 build-debug/main.o
                                  0x13 (size before relaxing)
  .rodata.off.str1.1
-                0x080071cc        0x0 build-debug/main.o
+                0x080072fb        0x0 build-debug/main.o
                                  0x1b (size before relaxing)
  .rodata.main.str1.1
-                0x080071cc        0x0 build-debug/main.o
-                                0x2bf (size before relaxing)
+                0x080072fb        0x0 build-debug/main.o
+                                0x2fa (size before relaxing)
  .rodata.str1.1
-                0x080071cc        0x0 build-debug/main.o
+                0x080072fb        0x0 build-debug/main.o
                                  0x20 (size before relaxing)
- .rodata.how.0  0x080071cc        0xc build-debug/main.o
+ *fill*         0x080072fb        0x1 
+ .rodata.how.3  0x080072fc        0xc build-debug/main.o
  .rodata.adc_rows
-                0x080071d8       0x40 build-debug/main.o
+                0x08007308       0x40 build-debug/main.o
  .rodata.mv.constprop.0.str1.1
-                0x08007218        0x0 build-debug/measure.o
+                0x08007348        0x0 build-debug/measure.o
                                   0xe (size before relaxing)
  .rodata.pinout.constprop.0.str1.1
-                0x08007218        0x0 build-debug/measure.o
+                0x08007348        0x0 build-debug/measure.o
                                  0x10 (size before relaxing)
  .rodata.diode_line.constprop.0.str1.1
-                0x08007218        0x0 build-debug/measure.o
+                0x08007348        0x0 build-debug/measure.o
                                   0xe (size before relaxing)
  .rodata.measure_format.str1.1
-                0x08007218        0x0 build-debug/measure.o
+                0x08007348        0x0 build-debug/measure.o
                                   0x9 (size before relaxing)
  .rodata.value_line.constprop.0.str1.1
-                0x08007218        0x0 build-debug/measure.o
+                0x08007348        0x0 build-debug/measure.o
                                   0x6 (size before relaxing)
  .rodata.measure_run.str1.1
-                0x08007218        0x0 build-debug/measure.o
+                0x08007348        0x0 build-debug/measure.o
                                  0xe1 (size before relaxing)
- .rodata.pfx.0  0x08007218        0x9 build-debug/measure.o
- .rodata.rl.1   0x08007221        0x3 build-debug/measure.o
+ .rodata.pfx.0  0x08007348        0x9 build-debug/measure.o
+ .rodata.rl.1   0x08007351        0x3 build-debug/measure.o
  .rodata.vfmt.str1.1
-                0x08007224        0x0 build-debug/uart.o
+                0x08007354        0x0 build-debug/uart.o
                                  0x11 (size before relaxing)
  .rodata.CheckResistor.str1.1
-                0x08007224        0x0 build-debug/ct_resistor.o
+                0x08007354        0x0 build-debug/ct_resistor.o
                                  0x6f (size before relaxing)
  .rodata.GetGateThreshold.str1.1
-                0x08007224        0x0 build-debug/ct_semi.o
+                0x08007354        0x0 build-debug/ct_semi.o
                                  0x58 (size before relaxing)
  .rodata.CheckPUT.str1.1
-                0x08007224        0x0 build-debug/ct_semi.o
+                0x08007354        0x0 build-debug/ct_semi.o
                                  0x27 (size before relaxing)
-                0x08007224                        . = ALIGN (0x4)
+                0x08007354                        . = ALIGN (0x4)
 
-.glue_7         0x08007224        0x0
- .glue_7        0x08007224        0x0 linker stubs
+.glue_7         0x08007354        0x0
+ .glue_7        0x08007354        0x0 linker stubs
 
-.glue_7t        0x08007224        0x0
- .glue_7t       0x08007224        0x0 linker stubs
+.glue_7t        0x08007354        0x0
+ .glue_7t       0x08007354        0x0 linker stubs
 
-.vfp11_veneer   0x08007224        0x0
- .vfp11_veneer  0x08007224        0x0 linker stubs
+.vfp11_veneer   0x08007354        0x0
+ .vfp11_veneer  0x08007354        0x0 linker stubs
 
-.v4_bx          0x08007224        0x0
- .v4_bx         0x08007224        0x0 linker stubs
+.v4_bx          0x08007354        0x0
+ .v4_bx         0x08007354        0x0 linker stubs
 
-.iplt           0x08007224        0x0
- .iplt          0x08007224        0x0 build-debug/adc.o
+.iplt           0x08007354        0x0
+ .iplt          0x08007354        0x0 build-debug/adc.o
 
-.rel.dyn        0x08007224        0x0
- .rel.iplt      0x08007224        0x0 build-debug/adc.o
+.rel.dyn        0x08007354        0x0
+ .rel.iplt      0x08007354        0x0 build-debug/adc.o
 
-.data           0x20000000        0x8 load address 0x08007224
+.data           0x20000000        0x8 load address 0x08007354
                 0x20000000                        _sdata = .
  *(.data*)
  .data.adc_sample_code
@@ -849,12 +850,12 @@ LOAD /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a
                 0x20000008                        . = ALIGN (0x4)
  *fill*         0x20000007        0x1 
                 0x20000008                        _edata = .
-                0x08007224                        _sidata = LOADADDR (.data)
+                0x08007354                        _sidata = LOADADDR (.data)
 
-.igot.plt       0x20000008        0x0 load address 0x0800722c
+.igot.plt       0x20000008        0x0 load address 0x0800735c
  .igot.plt      0x20000008        0x0 build-debug/adc.o
 
-.bss            0x20000008      0x16c load address 0x0800722c
+.bss            0x20000008      0x34c load address 0x0800735c
                 0x20000008                        _sbss = .
  *(.bss*)
  .bss.t_down    0x20000008        0x4 build-debug/board.o
@@ -891,10 +892,13 @@ LOAD /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a
  .bss.a_ddr     0x200000f1        0x1 build-debug/ct_hal.o
  .bss.r_port    0x200000f2        0x1 build-debug/ct_hal.o
  .bss.r_ddr     0x200000f3        0x1 build-debug/ct_hal.o
- .bss.result    0x200000f4       0x80 build-debug/measure.o
+ .bss.vg.0      0x200000f4       0xa0 build-debug/main.o
+ .bss.vd.1      0x20000194       0xa0 build-debug/main.o
+ .bss.tg.2      0x20000234       0xa0 build-debug/main.o
+ .bss.result    0x200002d4       0x80 build-debug/measure.o
  *(COMMON)
-                0x20000174                        . = ALIGN (0x4)
-                0x20000174                        _ebss = .
+                0x20000354                        . = ALIGN (0x4)
+                0x20000354                        _ebss = .
                 0x00000001                        ASSERT (((_ebss + 0x400) <= _estack), less than 1 KB left for the stack)
                 0x00000001                        ASSERT (((_estack & 0xfffffff) < 0x2000), bootloader refuses an initial SP >= 0x20002000)
 
@@ -905,7 +909,7 @@ LOAD /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a
 OUTPUT(build-debug/lcrp1-fw.elf elf32-littlearm)
 LOAD linker stubs
 
-.debug_info     0x00000000     0xa8b4
+.debug_info     0x00000000     0xabac
  .debug_info    0x00000000      0x344 build-debug/adc.o
  .debug_info    0x00000344      0xb23 build-debug/board.o
  .debug_info    0x00000e67     0x107c build-debug/ct_glue.o
@@ -914,19 +918,19 @@ LOAD linker stubs
  .debug_info    0x00002d72      0x14d build-debug/font_data.o
  .debug_info    0x00002ebf      0xa2e build-debug/lcd.o
  .debug_info    0x000038ed      0x212 build-debug/libc.o
- .debug_info    0x00003aff     0x1989 build-debug/main.o
- .debug_info    0x00005488     0x170e build-debug/measure.o
- .debug_info    0x00006b96      0x17d build-debug/startup.o
- .debug_info    0x00006d13      0x52b build-debug/uart.o
- .debug_info    0x0000723e     0x1001 build-debug/ct_probes.o
- .debug_info    0x0000823f      0xabb build-debug/ct_resistor.o
- .debug_info    0x00008cfa     0x188f build-debug/ct_semi.o
- .debug_info    0x0000a589      0x212 build-debug/ct_ct_extract.o
- .debug_info    0x0000a79b       0x31 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_thumb1_case_uqi.o)
- .debug_info    0x0000a7cc       0x31 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_thumb1_case_shi.o)
- .debug_info    0x0000a7fd       0x3d /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_udivsi3.o)
- .debug_info    0x0000a83a       0x3e /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_divsi3.o)
- .debug_info    0x0000a878       0x3c /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_dvmd_tls.o)
+ .debug_info    0x00003aff     0x1c81 build-debug/main.o
+ .debug_info    0x00005780     0x170e build-debug/measure.o
+ .debug_info    0x00006e8e      0x17d build-debug/startup.o
+ .debug_info    0x0000700b      0x52b build-debug/uart.o
+ .debug_info    0x00007536     0x1001 build-debug/ct_probes.o
+ .debug_info    0x00008537      0xabb build-debug/ct_resistor.o
+ .debug_info    0x00008ff2     0x188f build-debug/ct_semi.o
+ .debug_info    0x0000a881      0x212 build-debug/ct_ct_extract.o
+ .debug_info    0x0000aa93       0x31 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_thumb1_case_uqi.o)
+ .debug_info    0x0000aac4       0x31 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_thumb1_case_shi.o)
+ .debug_info    0x0000aaf5       0x3d /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_udivsi3.o)
+ .debug_info    0x0000ab32       0x3e /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_divsi3.o)
+ .debug_info    0x0000ab70       0x3c /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_dvmd_tls.o)
 
 .debug_abbrev   0x00000000     0x22bb
  .debug_abbrev  0x00000000      0x175 build-debug/adc.o
@@ -952,7 +956,7 @@ LOAD linker stubs
  .debug_abbrev  0x00002295       0x26 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_dvmd_tls.o)
 
 .debug_loclists
-                0x00000000     0x43bc
+                0x00000000     0x4404
  .debug_loclists
                 0x00000000      0x206 build-debug/adc.o
  .debug_loclists
@@ -968,21 +972,21 @@ LOAD linker stubs
  .debug_loclists
                 0x000010a7      0x238 build-debug/libc.o
  .debug_loclists
-                0x000012df      0x9fc build-debug/main.o
+                0x000012df      0xa44 build-debug/main.o
  .debug_loclists
-                0x00001cdb      0x554 build-debug/measure.o
+                0x00001d23      0x554 build-debug/measure.o
  .debug_loclists
-                0x0000222f       0x47 build-debug/startup.o
+                0x00002277       0x47 build-debug/startup.o
  .debug_loclists
-                0x00002276      0x499 build-debug/uart.o
+                0x000022be      0x499 build-debug/uart.o
  .debug_loclists
-                0x0000270f      0x5c8 build-debug/ct_probes.o
+                0x00002757      0x5c8 build-debug/ct_probes.o
  .debug_loclists
-                0x00002cd7      0x554 build-debug/ct_resistor.o
+                0x00002d1f      0x554 build-debug/ct_resistor.o
  .debug_loclists
-                0x0000322b      0xf9d build-debug/ct_semi.o
+                0x00003273      0xf9d build-debug/ct_semi.o
  .debug_loclists
-                0x000041c8      0x1f4 build-debug/ct_ct_extract.o
+                0x00004210      0x1f4 build-debug/ct_ct_extract.o
 
 .debug_aranges  0x00000000      0x6d8
  .debug_aranges
@@ -1029,7 +1033,7 @@ LOAD linker stubs
                 0x000006b8       0x20 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_dvmd_tls.o)
 
 .debug_rnglists
-                0x00000000      0x901
+                0x00000000      0x8ff
  .debug_rnglists
                 0x00000000       0x74 build-debug/adc.o
  .debug_rnglists
@@ -1045,23 +1049,23 @@ LOAD linker stubs
  .debug_rnglists
                 0x0000050a       0x2b build-debug/libc.o
  .debug_rnglists
-                0x00000535      0x11e build-debug/main.o
+                0x00000535      0x11c build-debug/main.o
  .debug_rnglists
-                0x00000653       0xe3 build-debug/measure.o
+                0x00000651       0xe3 build-debug/measure.o
  .debug_rnglists
-                0x00000736       0x19 build-debug/startup.o
+                0x00000734       0x19 build-debug/startup.o
  .debug_rnglists
-                0x0000074f       0x66 build-debug/uart.o
+                0x0000074d       0x66 build-debug/uart.o
  .debug_rnglists
-                0x000007b5       0x58 build-debug/ct_probes.o
+                0x000007b3       0x58 build-debug/ct_probes.o
  .debug_rnglists
-                0x0000080d       0x2e build-debug/ct_resistor.o
+                0x0000080b       0x2e build-debug/ct_resistor.o
  .debug_rnglists
-                0x0000083b       0xa7 build-debug/ct_semi.o
+                0x00000839       0xa7 build-debug/ct_semi.o
  .debug_rnglists
-                0x000008e2       0x1f build-debug/ct_ct_extract.o
+                0x000008e0       0x1f build-debug/ct_ct_extract.o
 
-.debug_line     0x00000000     0x5fba
+.debug_line     0x00000000     0x60aa
  .debug_line    0x00000000      0x32c build-debug/adc.o
  .debug_line    0x0000032c      0xae2 build-debug/board.o
  .debug_line    0x00000e0e      0x165 build-debug/ct_glue.o
@@ -1070,62 +1074,62 @@ LOAD linker stubs
  .debug_line    0x0000191f       0x74 build-debug/font_data.o
  .debug_line    0x00001993      0x51c build-debug/lcd.o
  .debug_line    0x00001eaf      0x1a9 build-debug/libc.o
- .debug_line    0x00002058      0xabe build-debug/main.o
- .debug_line    0x00002b16      0xa5c build-debug/measure.o
- .debug_line    0x00003572       0xdc build-debug/startup.o
- .debug_line    0x0000364e      0x42c build-debug/uart.o
- .debug_line    0x00003a7a      0x87b build-debug/ct_probes.o
- .debug_line    0x000042f5      0x695 build-debug/ct_resistor.o
- .debug_line    0x0000498a     0x12b4 build-debug/ct_semi.o
- .debug_line    0x00005c3e      0x1bd build-debug/ct_ct_extract.o
- .debug_line    0x00005dfb       0x52 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_thumb1_case_uqi.o)
- .debug_line    0x00005e4d       0x53 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_thumb1_case_shi.o)
- .debug_line    0x00005ea0       0x61 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_udivsi3.o)
- .debug_line    0x00005f01       0x6f /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_divsi3.o)
- .debug_line    0x00005f70       0x4a /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_dvmd_tls.o)
+ .debug_line    0x00002058      0xbae build-debug/main.o
+ .debug_line    0x00002c06      0xa5c build-debug/measure.o
+ .debug_line    0x00003662       0xdc build-debug/startup.o
+ .debug_line    0x0000373e      0x42c build-debug/uart.o
+ .debug_line    0x00003b6a      0x87b build-debug/ct_probes.o
+ .debug_line    0x000043e5      0x695 build-debug/ct_resistor.o
+ .debug_line    0x00004a7a     0x12b4 build-debug/ct_semi.o
+ .debug_line    0x00005d2e      0x1bd build-debug/ct_ct_extract.o
+ .debug_line    0x00005eeb       0x52 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_thumb1_case_uqi.o)
+ .debug_line    0x00005f3d       0x53 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_thumb1_case_shi.o)
+ .debug_line    0x00005f90       0x61 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_udivsi3.o)
+ .debug_line    0x00005ff1       0x6f /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_divsi3.o)
+ .debug_line    0x00006060       0x4a /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_dvmd_tls.o)
 
-.debug_str      0x00000000     0x159c
- .debug_str     0x00000000     0x159c build-debug/adc.o
+.debug_str      0x00000000     0x15a7
+ .debug_str     0x00000000     0x15a7 build-debug/adc.o
                                 0x1cd (size before relaxing)
- .debug_str     0x0000159c        0x0 build-debug/board.o
+ .debug_str     0x000015a7        0x0 build-debug/board.o
                                 0x2f3 (size before relaxing)
- .debug_str     0x0000159c        0x0 build-debug/ct_glue.o
+ .debug_str     0x000015a7        0x0 build-debug/ct_glue.o
                                 0x887 (size before relaxing)
- .debug_str     0x0000159c        0x0 build-debug/ct_hal.o
+ .debug_str     0x000015a7        0x0 build-debug/ct_hal.o
                                 0x3e4 (size before relaxing)
- .debug_str     0x0000159c        0x0 build-debug/ct_stubs.o
+ .debug_str     0x000015a7        0x0 build-debug/ct_stubs.o
                                 0x1d7 (size before relaxing)
- .debug_str     0x0000159c        0x0 build-debug/font_data.o
+ .debug_str     0x000015a7        0x0 build-debug/font_data.o
                                 0x191 (size before relaxing)
- .debug_str     0x0000159c        0x0 build-debug/lcd.o
+ .debug_str     0x000015a7        0x0 build-debug/lcd.o
                                 0x221 (size before relaxing)
- .debug_str     0x0000159c        0x0 build-debug/libc.o
+ .debug_str     0x000015a7        0x0 build-debug/libc.o
                                 0x170 (size before relaxing)
- .debug_str     0x0000159c        0x0 build-debug/main.o
-                                0x462 (size before relaxing)
- .debug_str     0x0000159c        0x0 build-debug/measure.o
+ .debug_str     0x000015a7        0x0 build-debug/main.o
+                                0x490 (size before relaxing)
+ .debug_str     0x000015a7        0x0 build-debug/measure.o
                                 0x54d (size before relaxing)
- .debug_str     0x0000159c        0x0 build-debug/startup.o
+ .debug_str     0x000015a7        0x0 build-debug/startup.o
                                 0x1d9 (size before relaxing)
- .debug_str     0x0000159c        0x0 build-debug/uart.o
+ .debug_str     0x000015a7        0x0 build-debug/uart.o
                                 0x21b (size before relaxing)
- .debug_str     0x0000159c        0x0 build-debug/ct_probes.o
+ .debug_str     0x000015a7        0x0 build-debug/ct_probes.o
                                 0x5a9 (size before relaxing)
- .debug_str     0x0000159c        0x0 build-debug/ct_resistor.o
+ .debug_str     0x000015a7        0x0 build-debug/ct_resistor.o
                                 0x44e (size before relaxing)
- .debug_str     0x0000159c        0x0 build-debug/ct_semi.o
+ .debug_str     0x000015a7        0x0 build-debug/ct_semi.o
                                 0x681 (size before relaxing)
- .debug_str     0x0000159c        0x0 build-debug/ct_ct_extract.o
+ .debug_str     0x000015a7        0x0 build-debug/ct_ct_extract.o
                                 0x20e (size before relaxing)
- .debug_str     0x0000159c        0x0 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_thumb1_case_uqi.o)
+ .debug_str     0x000015a7        0x0 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_thumb1_case_uqi.o)
                                  0xb4 (size before relaxing)
- .debug_str     0x0000159c        0x0 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_thumb1_case_shi.o)
+ .debug_str     0x000015a7        0x0 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_thumb1_case_shi.o)
                                  0xb4 (size before relaxing)
- .debug_str     0x0000159c        0x0 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_udivsi3.o)
+ .debug_str     0x000015a7        0x0 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_udivsi3.o)
                                  0xb9 (size before relaxing)
- .debug_str     0x0000159c        0x0 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_divsi3.o)
+ .debug_str     0x000015a7        0x0 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_divsi3.o)
                                  0xb7 (size before relaxing)
- .debug_str     0x0000159c        0x0 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_dvmd_tls.o)
+ .debug_str     0x000015a7        0x0 /usr/lib/gcc/arm-none-eabi/16.2.0/thumb/v6-m/nofp/libgcc.a(_dvmd_tls.o)
                                  0xba (size before relaxing)
 
 .debug_frame    0x00000000      0xf84
