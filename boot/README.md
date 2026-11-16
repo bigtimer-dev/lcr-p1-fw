@@ -84,15 +84,13 @@ make test-boot PY=../lcr-p1-linux/.venv/bin/python    # emulator tests (unicorn)
 
 ## Installing
 
-> **Not installable on meters as FNIRSI ships them.** The chip comes with read protection on (FLASH OBR
-> 0x4002201C bit 1). That write-protects the first 4 KB of flash, so an app can rewrite only the last
-> 2 KB of the bootloader area. On 2026-11-16 the first installer did exactly that and left a mix of
-> FNIRSI's first 4 KB and this loader's last 2 KB. The meter no longer booted. It was repaired over SWD
-> (a Raspberry Pi as the probe, the CPU single-stepping the installer's own `ldr`/`str` instructions)
-> by writing FNIRSI's original 2 KB back. The installer now checks OBR/WRPR and refuses ("Read-protected").
->
-> To install anyway, read protection has to be removed. That mass-erases the whole flash, including
-> FNIRSI's loader and the calibration record, so the loader and firmware then have to be written over SWD.
+> **Meters as FNIRSI ships them need SWD (see [Installing over SWD](#installing-over-swd)).** The chip
+> comes with read protection on (FLASH OBR 0x4002201C bit 1). That write-protects the first 4 KB of
+> flash, so an app can rewrite only the last 2 KB of the bootloader area. On 2026-11-16 the first
+> installer did exactly that and left a mix of FNIRSI's first 4 KB and this loader's last 2 KB. The meter
+> no longer booted. It was repaired over SWD (a Raspberry Pi as the probe, the CPU single-stepping the
+> installer's own `ldr`/`str` instructions) by writing FNIRSI's original 2 KB back. The installer now
+> checks OBR/WRPR and refuses ("Read-protected"). The same meter was then installed over SWD.
 >
 > There is no way to repair a broken bootloader without SWD. The installer is the only code that writes
 > 0x08000000-0x080017FF. It refuses below 3.5 V battery, retries and verifies, and keeps retrying rather
@@ -116,3 +114,41 @@ make installer BLOB=path/to/bootloader.bin BLOB_NAME="FNIRSI stock" IDIR=build/i
 
 Flash the resulting `build/inst-stock.bin` the same way. Run `lcrp1 flash --backup` first if you want a
 full image of the flash.
+
+## Installing over SWD
+
+This removes FNIRSI's read protection, which mass-erases the flash, and writes the loader, lcrp1-fw
+and the meter's own calibration back. Done on a real meter on 2026-11-16 with a Raspberry Pi Zero 2 W
+and OpenOCD 0.12 (`bcm2835gpio`). Scripts are in [`swd/`](swd). FNIRSI's loader is gone afterwards.
+From then on the chip is unprotected, so SWD can read and write everything directly.
+
+**Wiring.** The 4 holes on the battery side, left of the buzzer, are CLK, GND, DIO, 5V. Connect
+CLK to Pi pin 22 (GPIO25), DIO to pin 18 (GPIO24), GND to pin 20. Leave 5V open. Run `pads.py 0x08`
+(2 mA, slew limited) before every OpenOCD run, or the reads come back garbled from ringing. OpenOCD resets
+the pads when it exits.
+
+**The chip.** N32G032; the option bytes follow the N32G031 user manual (sections 2.2.1.7 to 2.2.1.10):
+RDP1 is the low byte of 0x1FFFF600, RDP2 that of 0x1FFFF60C. Level 2 (permanent, SWD disabled) is
+RDP2 = 0xCC with nRDP2 = 0x33. **Nothing here writes 0x1FFFF60C.** Under level 1 the debugger cannot
+read flash or run flash commands itself, so the scripts let the CPU single-step one `ldr`/`str`
+instruction in FNIRSI's loader (0x08000392 `ldr r1,[r1]`, 0x08000258 `str r2,[r0]`). This works only
+with FNIRSI's original loader (CRC32 97e1e1e5). The FNIRSI loader does not start the watchdog, so the
+core may stay halted. lcrp1-fw does start it: never halt it for more than a moment.
+
+1. Hold ZENER, press TEST and keep holding: FNIRSI's update mode. On the Pi run `sudo ./wait_latch.sh`.
+   It halts the core and switches the power latch PA8 on. Release TEST.
+2. `openocd -f n32slow.cfg -f backup.tcl > backup.txt`: read-only. It prints the option bytes (factory:
+   `00ff00ff 00ff00ff 00ff00ff 00ffff00`) and the 2 KB at 0x0800F800-0x0800FFFF: lcrp1-fw's adjustment
+   page and FNIRSI's calibration record (`dEnK` at 0x0800FFD0). Turn the `W addr value` lines into a
+   2 KB little-endian file and check the record before going on.
+3. `openocd -f n32slow.cfg -f rdp0.tcl`: unlocks FLASH and the option bytes, erases the option page,
+   then writes 0x00FF00A5 to 0x1FFFF600 (RDP1 = 0xA5, USER = 0xFF). The chip then mass-erases its flash.
+   It stops before writing if the unlock or the erase does not check out.
+4. Hold TEST, then `openocd -f n32slow.cfg -f reset0.tcl`. It resets (the option bytes reload) and
+   latches the power again. It should print OB 0x03fffffc, and the debugger now reads 0xffffffff from
+   flash. Release TEST.
+5. `./mkprog.py lcrp1-bl.bin lcrp1-fw.bin backup-2k.bin`, copy `prog_data.tcl` next to `prog.tcl`,
+   run `openocd -f n32slow.cfg -f prog.tcl`. It programs from the debugger (87 s at 50 kHz) and saves
+   `readback.bin`, whose sha256 must equal `image64k.bin`.
+6. `openocd -f n32slow.cfg -f go.tcl` resets: the meter starts lcrp1-fw through the new loader.
+   `lcrp1 flash --backup` then reads the same 64 KB over serial.
