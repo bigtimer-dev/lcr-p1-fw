@@ -20,6 +20,16 @@ loader starts, in the same way, and still accepts FNIRSI's update tool, but adds
 
 It never writes below 0x08001800: the bootloader cannot overwrite itself.
 
+Tested on a real meter (2026-11-16): power-on into lcrp1-fw, `#U`, `lcrp1 flash` with the firmware
+running (no keys), `--backup` (64 KB, identical to what was written), ZENER+TEST, an update abandoned after
+10 pages (the app is refused, the next power-on says "no valid app"), TEST 1 s to switch off, and
+FNIRSI's own stream (`AC 55 03 04`).
+
+**Calibration page.** Like FNIRSI's loader, it writes every page the image covers. Stock-size images end at
+0x0800FF8C, so they erase the calibration record at 0x0800FFD0 and lcrp1-fw's adjustment page at
+0x0800F800. lcrp1-fw ends far lower and leaves both alone. Back up with `lcrp1 flash --backup` before
+flashing a stock image.
+
 ## Hand-off to the app
 
 The direct boot path (no key, valid app) leaves the hardware exactly as FNIRSI's loader does. That means
