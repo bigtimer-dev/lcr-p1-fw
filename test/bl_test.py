@@ -554,7 +554,7 @@ if 4 in ONLY:
     m.run(ms=400)
     r = call(m, 1)
     info = struct.unpack(INFO_FMT, r[2]) if r and len(r[2]) == struct.calcsize(INFO_FMT) else None
-    check('INFO: id, version, app base, page size, bl crc', info and info[0] == b'LCRPBL' and info[1:3] == (1, 0)
+    check('INFO: id, version, app base, page size, bl crc', info and info[0] == b'LCRPBL' and info[1:3] == (BL[0x17F5], BL[0x17F4])
           and info[3] == APP_BASE and info[5] == 512 and info[7] == crc, info)
     # new host: FNIRSI header, then quiet -> hello (INFO as cmd 0) -> frames
     m.take_tx()
@@ -673,7 +673,7 @@ if 6 in ONLY and STOCK_BL and os.path.exists(INST):
     m.run(ms=300)
     t = m.take_tx().decode('latin-1')
     f = m.flash_dump()
-    check('TEST held 3 s: bootloader installed and verified', f[:0x1800] == BL and 'installed LCR-P1 BL 1.0' in t, t)
+    check('TEST held 3 s: bootloader installed and verified', f[:0x1800] == BL and f'installed LCR-P1 BL {BL[0x17F5]}.{BL[0x17F4]}' in t, t)
     check('installer: no flash errors', not [e for e in m.flash_errors if 'BOOTLOADER' not in e], m.flash_errors[:3])
     check('installer: app area untouched', f[0x1800:0x1800 + len(inst)] == inst)
     m.panel.png(os.path.join(OUT, 'screen_installed.png'))
@@ -718,7 +718,7 @@ if 6 in ONLY and STOCK_BL and os.path.exists(INST):
     m.run(ms=50, until=lambda x: x.in_app())
     m.run(ms=500)
     t = m.take_tx().decode('latin-1')
-    check('installer on the new loader: recognises it, nothing to do', 'now LCR-P1 BL 1.0' in t and m.erases == [], t)
+    check('installer on the new loader: recognises it, nothing to do', f'now LCR-P1 BL {BL[0x17F5]}.{BL[0x17F4]}' in t and m.erases == [], t)
 
 bad = [e for mm in METERS for e in mm.flash_errors if 'BOOTLOADER AREA' in e]
 check('no erase/program below 0x08001800 in any test', not bad, bad[:3])

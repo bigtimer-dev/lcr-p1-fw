@@ -4,7 +4,8 @@ port I/O, select() and clock are patched onto emulated time, so the real host co
     python -u test/host_test.py              (after `make boot`; CASES=framed,baud,... picks cases)
 
 Cases: framed (ZENER entry), baud (460800), fnirsi (FNIRSI loader: legacy fallback), stock (FNIRSI app image
-over the framed protocol), backup (--backup), hashU (running lcrp1-fw -> #U -> update).
+over the framed protocol), backup (--backup), hashU (running lcrp1-fw -> #U -> update),
+cal (calibration record kept).
 """
 import os as _os, sys, types
 FW = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
@@ -45,7 +46,7 @@ def result(name, ok, detail=''):
 BL, APP, STOCK_BL, STOCK_APP, Meter = g['BL'], g['APP'], g['STOCK_BL'], g['STOCK_APP'], g['Meter']
 img = APP
 import tempfile
-want = (_os.environ.get('CASES') or 'framed,baud,fnirsi,stock,backup,hashU').split(',')
+want = (_os.environ.get('CASES') or 'framed,baud,fnirsi,stock,backup,hashU,cal').split(',')
 
 if 'framed' in want:
     m = Meter(BL, STOCK_APP, zener=True); m.run(ms=300)
@@ -104,6 +105,39 @@ if 'hashU' in want:
     fl = bytes(m.uc.mem_read(0x08001800, len(STOCK_APP)))
     result('flash.py: running lcrp1-fw -> #U -> framed update', ok and fl == STOCK_APP and m.in_app(),
            f'{msg} | {(m.cyc - t0) / g["CPU"]:.2f} s')
+
+if 'cal' in want and STOCK_APP:
+    # the stock firmware's calibration record ("dEnK" + 32 bytes at 0x0800FFD0) shares the last page with the end
+    # of stock-size images: the loader keeps it when the image leaves that area blank
+    import struct as _st
+    rec = b'dEnK' + bytes(range(1, 33))
+    def cal_meter():
+        fl = bytearray(b'\xff' * 0x10000)
+        fl[:len(BL)] = BL
+        fl[APP_BASE - 0x08000000:APP_BASE - 0x08000000 + len(APP)] = APP
+        fl[0xFFD0:0xFFD0 + len(rec)] = rec
+        fl[0xFFFC:0x10000] = _st.pack('<I', 0x12345678)
+        m = Meter(BL, flash=fl, zener=True); m.run(ms=300)
+        return m
+    APP_BASE = g['APP_BASE']
+    m = cal_meter(); Host(m)
+    ok, msg = F.flash(STOCK_APP, 'emu', listen=0.5)
+    m.run(ms=50, until=lambda mm: mm.in_app())
+    fl = bytes(m.uc.mem_read(0x08001800, len(STOCK_APP)))
+    result('cal record kept: stock image over the framed protocol',
+           ok and fl == STOCK_APP and m.in_app() and bytes(m.uc.mem_read(0x0800FFD0, len(rec))) == rec, msg)
+    m = cal_meter(); Host(m)
+    F.os.write(3, F.HEADER + b''.join(F.blocks(STOCK_APP)))
+    m.run(ms=8000, until=lambda mm: mm.in_app())     # 59 KB at 115200 = 5.2 s
+    fl = bytes(m.uc.mem_read(0x08001800, len(STOCK_APP)))
+    result('cal record kept: stock image over the FNIRSI stream',
+           fl == STOCK_APP and m.in_app() and bytes(m.uc.mem_read(0x0800FFD0, len(rec))) == rec,
+           bytes(m.take_tx()).hex(' '))
+    big = STOCK_APP + b'\x00' * (0xFFE0 - 0x1800 - len(STOCK_APP))      # an image with its own data there wins
+    m = cal_meter(); Host(m)
+    ok, msg = F.flash(big, 'emu', listen=0.5)
+    fl = bytes(m.uc.mem_read(0x08001800, len(big)))
+    result('cal area: an image that covers it is written as sent', ok and fl == big, msg)
 
 print(f'\n{len(fails)} FAILED: ' + ', '.join(fails) if fails else '\nALL PASS')
 sys.exit(1 if fails else 0)

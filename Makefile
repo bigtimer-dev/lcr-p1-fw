@@ -52,7 +52,8 @@ build/boot:
 #   make installer BLOB=stock.bin BLOB_NAME="FNIRSI stock" IDIR=build/inst-stock   (restore a dumped loader)
 STOCK_BL_CRC = 0x97e1e1e5    # CRC32 of the FNIRSI loader dumped 2026-11-14 (the dump itself is not in the repo)
 BLOB ?= build/lcrp1-bl.bin
-BLOB_NAME ?= LCR-P1 BL 1.0
+BL_VER := $(shell sed -n 's/^#define BL_VERSION "\(.*\)"/\1/p' boot/bl.c)
+BLOB_NAME ?= LCR-P1 BL $(BL_VER)
 IDIR ?= build/inst
 INST_SRC = boot/install.c src/startup.c src/board.c src/lcd.c src/uart.c src/font_data.c src/libc.c src/adc.c
 INST_OBJ = $(patsubst %.c,$(IDIR)/%.o,$(notdir $(INST_SRC))) $(IDIR)/blob.o

@@ -21,8 +21,8 @@
 #include "../src/hw.h"
 
 #define BL_VER_MAJ 1
-#define BL_VER_MIN 0
-#define BL_VERSION "1.0"
+#define BL_VER_MIN 1
+#define BL_VERSION "1.1"
 #define APP_BASE   0x08001800u
 #define FLASH_END  0x08010000u
 #define PAGE       512u
@@ -338,11 +338,30 @@ static int fl_wait(void)
     return 0;
 }
 
+/* The meter's own calibration record ("dEnK" + data at 0x0800FFD0, written by the stock firmware) shares
+   the last page with the end of stock-size images. If the image leaves 0xFFD0..0xFFFB blank, the old record
+   is copied into the new page, so updates no longer erase the calibration. */
+#define CAL_PAGE  0x0800FE00u
+#define CAL_W0    ((0xFFD0u - 0xFE00u) / 4)
+#define CAL_W1    ((0xFFFCu - 0xFE00u) / 4)
+static void keep_cal(uint32_t *d)
+{
+    if (R32(0x0800FFD0u) != 0x4B6E4564u)
+        return;
+    for (unsigned i = CAL_W0; i < CAL_W1; i++)
+        if (d[i] != 0xFFFFFFFFu)
+            return;
+    for (unsigned i = CAL_W0; i < CAL_W1; i++)
+        d[i] = R32(CAL_PAGE + 4 * i);
+}
+
 /* erase + program + verify one 512-byte page; never below the app */
-static int page_write(uint32_t addr, const uint32_t *d)
+static int page_write(uint32_t addr, uint32_t *d)
 {
     if (addr < APP_BASE || addr >= FLASH_END || (addr & (PAGE - 1)))
         return 0;
+    if (addr == CAL_PAGE && d)
+        keep_cal(d);
     for (int attempt = 0; attempt < 3; attempt++) {
         int ok = 1;
         wdt();
