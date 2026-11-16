@@ -94,6 +94,29 @@ static void off(const char *why)
     power_off();
 }
 
+/* serial #U: hand over to the LCR-P1 bootloader's update mode (boot/bl.c: request words at 0x20001FF8 and
+   a jump to its reset vector). FNIRSI's loader has no such entry: then nothing happens. */
+static void enter_bootloader(void)
+{
+    const volatile uint32_t *info = (const volatile uint32_t *)0x080017F0u;
+    if (info[0] != 0x314C424Cu || info[3] != ~0x314C424Cu) {
+        uprintf("#U no LCR-P1 bootloader (FNIRSI loader: hold ZENER, press TEST)\r\n");
+        return;
+    }
+    uprintf("#U bootloader %u.%u\r\n", (unsigned)(info[1] >> 8 & 255), (unsigned)(info[1] & 255));
+    gpio_set(PIN_HV, 0);
+    relay(0);
+    delay_ms(5);                                /* reply out */
+    __asm volatile("cpsid i");
+    T6_DIER = 0;
+    T6_CR1 = 0;
+    T1_CCER = 0;                                /* buzzer, backlight PWM off */
+    *(volatile uint32_t *)0x20001FF8u = 0xB007104Du;
+    *(volatile uint32_t *)0x20001FFCu = ~0xB007104Du;
+    uint32_t sp = R32(0x08000000u), pc = R32(0x08000004u);
+    __asm volatile("msr msp, %0\n bx %1" : : "r"(sp), "r"(pc));
+}
+
 static int no_header;                          /* a symbol result used the whole screen */
 
 /* symbol results: title at the top, the symbol with probe numbers at its terminals, values below */
@@ -665,6 +688,8 @@ int main(void)
                 c_test = 2;                     /* self-adjustment */
             else if (k == 'N')
                 nv_print("current");
+            else if (k == 'U')
+                enter_bootloader();             /* returns only without an LCR-P1 bootloader */
             else if (k == 'A')
                 page = !page, redraw = 1, shown = 0, uprintf("#A page %d\r\n", page);
 #ifdef CT_DEBUG
